@@ -178,6 +178,21 @@
     </div>
 </div>
 
+<!-- Section Header: Keuangan Internal Sistem -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+        <h4 class="cio-title d-flex align-items-center gap-2 mb-0" style="font-size: 16px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M3 21h18"/><path d="M3 10h18"/><path d="M5 6l7-3l7 3"/><path d="M4 10v11"/><path d="M20 10v11"/></svg>
+            Ringkasan Pembukuan Internal
+        </h4>
+        <div class="cio-subtitle" style="font-size: 12px;">Catatan pembukuan kas pemasukan & pengeluaran operasional di sistem</div>
+    </div>
+    <span class="badge bg-primary-subtle text-primary border border-primary px-3 py-1.5 rounded-pill fw-bold" style="font-size: 11px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 4px; vertical-align: middle;"><circle cx="12" cy="12" r="12"/></svg>
+        PEMBUKUAN INTERNAL
+    </span>
+</div>
+
 <!-- KPI Metric Cards -->
 <div class="row g-3 mb-4">
     @foreach ($metrics as $metric)
@@ -420,12 +435,19 @@
                         <div class="cio-card-header d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-3">
                             <div>
                                 <h3 class="cio-title">Tren Mutasi Dana Xendit</h3>
-                                <div class="cio-subtitle">Perbandingan Dana Masuk (Payment), Dana Keluar (Payout), & Saldo Bersih</div>
+                                <div class="cio-subtitle" id="chart-xendit-subtitle">Perbandingan Dana Masuk (Payment), Dana Keluar (Payout), & Saldo Bersih (6 Bulan Terakhir)</div>
                             </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="badge" style="background:#0ea5e9;color:#fff;font-size:11px;padding:4px 10px;border-radius:9999px;">
-                                    Xendit Analytics
-                                </span>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <div class="cio-trading-filter cio-xendit-filter" role="tablist" aria-label="Filter Periode Grafik Xendit">
+                                    <button type="button" class="btn-tab" data-period="1hr">1HR</button>
+                                    <button type="button" class="btn-tab" data-period="7hr">7HR</button>
+                                    <button type="button" class="btn-tab" data-period="1bln">1BLN</button>
+                                    <button type="button" class="btn-tab active" data-period="6bln">6BLN</button>
+                                    <button type="button" class="btn-tab" data-period="ytd">YTD</button>
+                                    <button type="button" class="btn-tab" data-period="1th">1TH</button>
+                                    <button type="button" class="btn-tab" data-period="5th">5TH</button>
+                                    <button type="button" class="btn-tab" data-period="maks">Maks</button>
+                                </div>
                             </div>
                         </div>
                         <div class="card-body p-3">
@@ -990,14 +1012,24 @@
 
         // ================= XENDIT CHARTS =================
         @if($xenditConfigured && !empty($xenditChartData))
-            var xenditTrends = @json($xenditChartData['trends'] ?? []);
+            var xenditChartTrends = @json($xenditChartData['chart_trends'] ?? []);
+            
+            var getXenditSeriesData = function(period) {
+                var data = xenditChartTrends[period] || xenditChartTrends['6bln'] || { labels: [], inflow: [], outflow: [], net: [] };
+                return {
+                    labels: data.labels || [],
+                    series: [
+                        { name: 'Dana Masuk (Payment)', data: data.inflow || [] },
+                        { name: 'Dana Keluar (Disbursement)', data: data.outflow || [] },
+                        { name: 'Net Saldo', data: data.net || [] }
+                    ]
+                };
+            };
+
+            var initialXenditData = getXenditSeriesData('6bln');
             
             var optionsXenditTrend = {
-                series: [
-                    { name: 'Dana Masuk (Payment)', data: xenditTrends.inflow || [] },
-                    { name: 'Dana Keluar (Disbursement)', data: xenditTrends.outflow || [] },
-                    { name: 'Net Saldo', data: xenditTrends.net || [] }
-                ],
+                series: initialXenditData.series,
                 chart: {
                     type: 'area',
                     height: 330,
@@ -1018,7 +1050,7 @@
                 dataLabels: { enabled: false },
                 stroke: { curve: 'smooth', width: 3 },
                 xaxis: {
-                    categories: xenditTrends.labels || [],
+                    categories: initialXenditData.labels,
                     axisBorder: { show: false },
                     axisTicks: { show: false },
                     labels: { style: { colors: '#64748B', fontSize: '12px', fontWeight: 600 } }
@@ -1050,6 +1082,34 @@
             if (xenditTrendEl) {
                 var chartXenditTrend = new ApexCharts(xenditTrendEl, optionsXenditTrend);
                 chartXenditTrend.render();
+
+                // Xendit Trading Period Tab click handler
+                $(".cio-xendit-filter .btn-tab").on("click", function () {
+                    $(".cio-xendit-filter .btn-tab").removeClass("active");
+                    $(this).addClass("active");
+
+                    var period = $(this).data("period");
+                    var periodData = getXenditSeriesData(period);
+
+                    var xenditSubtitles = {
+                        '1hr': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (Hari Ini)',
+                        '7hr': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (7 Hari Terakhir)',
+                        '1bln': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (30 Hari Terakhir)',
+                        '6bln': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (6 Bulan Terakhir)',
+                        'ytd': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (Tahun Ini - YTD)',
+                        '1th': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (12 Bulan Terakhir)',
+                        '5th': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (5 Tahun Terakhir)',
+                        'maks': 'Perbandingan Dana Masuk, Keluar, & Saldo Bersih Xendit (Keseluruhan / All-Time)'
+                    };
+
+                    $("#chart-xendit-subtitle").text(xenditSubtitles[period] || xenditSubtitles['6bln']);
+
+                    chartXenditTrend.updateOptions({
+                        xaxis: { categories: periodData.labels }
+                    }, false, true);
+
+                    chartXenditTrend.updateSeries(periodData.series, true);
+                });
             }
 
             // Xendit Channel Breakdown Donut

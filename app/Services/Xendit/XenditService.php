@@ -224,52 +224,133 @@ class XenditService
     }
 
     /**
-     * Ambil data tren dan distribusi untuk grafik Transaksi Xendit.
+     * Ambil data tren multi-periode dan distribusi untuk grafik Transaksi Xendit.
+     * Mendukung filter trading style: 1HR, 7HR, 1BLN, 6BLN, YTD, 1TH, 5TH, Maks.
      *
-     * @return array{trends: array, channel_breakdown: array, total_inflow: float, total_outflow: float}
+     * @return array
      */
     public function getXenditChartData(): array
     {
-        $transactions = $this->getRecentTransactions(30);
+        $transactions = $this->getRecentTransactions(100);
+        $now = now();
 
-        if ($transactions->isEmpty()) {
-            return [
-                'trends' => [
-                    'labels'   => ['Hari 1', 'Hari 2', 'Hari 3', 'Hari 4', 'Hari 5', 'Hari 6', 'Hari 7'],
-                    'inflow'   => [0, 0, 0, 0, 0, 0, 0],
-                    'outflow'  => [0, 0, 0, 0, 0, 0, 0],
-                    'net'      => [0, 0, 0, 0, 0, 0, 0],
-                ],
-                'channel_breakdown' => [
-                    'labels' => [],
-                    'totals' => [],
-                ],
-                'total_inflow'  => 0.0,
-                'total_outflow' => 0.0,
-            ];
+        $periods = [
+            '1hr'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            '7hr'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            '1bln' => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            '6bln' => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            'ytd'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            '1th'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            '5th'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+            'maks' => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
+        ];
+
+        // 1. 1HR (Breakdown Per Jam Hari Ini 00:00 - 23:00)
+        $todayTrx = $transactions->filter(fn($t) => $t->created_at->isToday());
+        for ($h = 0; $h < 24; $h++) {
+            $hLabel = sprintf('%02d:00', $h);
+            $hTrx = $todayTrx->filter(fn($t) => (int) $t->created_at->format('H') === $h);
+            $inc = $hTrx->where('is_income', true)->sum('amount');
+            $exp = $hTrx->where('is_income', false)->sum('amount');
+
+            $periods['1hr']['labels'][]  = $hLabel;
+            $periods['1hr']['inflow'][]  = (float) $inc;
+            $periods['1hr']['outflow'][] = (float) $exp;
+            $periods['1hr']['net'][]     = (float) ($inc - $exp);
         }
 
-        // Group by Date for Trend
-        $groupedByDate = [];
+        // 2. 7HR (7 Hari Terakhir)
+        for ($i = 6; $i >= 0; $i--) {
+            $dDate = $now->copy()->subDays($i);
+            $dStr = $dDate->format('Y-m-d');
+            $dTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m-d') === $dStr);
+            $inc = $dTrx->where('is_income', true)->sum('amount');
+            $exp = $dTrx->where('is_income', false)->sum('amount');
+
+            $periods['7hr']['labels'][]  = $dDate->translatedFormat('d M');
+            $periods['7hr']['inflow'][]  = (float) $inc;
+            $periods['7hr']['outflow'][] = (float) $exp;
+            $periods['7hr']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 3. 1BLN (30 Hari Terakhir - Agregasi 3 Hari)
+        for ($i = 29; $i >= 0; $i -= 3) {
+            $dStart = $now->copy()->subDays($i)->startOfDay();
+            $dEnd = $dStart->copy()->addDays(2)->endOfDay();
+            $dTrx = $transactions->filter(fn($t) => $t->created_at->between($dStart, $dEnd));
+            $inc = $dTrx->where('is_income', true)->sum('amount');
+            $exp = $dTrx->where('is_income', false)->sum('amount');
+
+            $periods['1bln']['labels'][]  = $dStart->translatedFormat('d M');
+            $periods['1bln']['inflow'][]  = (float) $inc;
+            $periods['1bln']['outflow'][] = (float) $exp;
+            $periods['1bln']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 4. 6BLN (6 Bulan Terakhir)
+        for ($i = 5; $i >= 0; $i--) {
+            $mDate = $now->copy()->subMonths($i);
+            $mKey = $mDate->format('Y-m');
+            $mTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m') === $mKey);
+            $inc = $mTrx->where('is_income', true)->sum('amount');
+            $exp = $mTrx->where('is_income', false)->sum('amount');
+
+            $periods['6bln']['labels'][]  = $mDate->translatedFormat('M Y');
+            $periods['6bln']['inflow'][]  = (float) $inc;
+            $periods['6bln']['outflow'][] = (float) $exp;
+            $periods['6bln']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 5. YTD (Year To Date)
+        $startOfYear = $now->copy()->startOfYear();
+        $monthsCount = $now->month;
+        for ($m = 1; $m <= $monthsCount; $m++) {
+            $mDate = $now->copy()->month($m);
+            $mKey = $mDate->format('Y-m');
+            $mTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m') === $mKey);
+            $inc = $mTrx->where('is_income', true)->sum('amount');
+            $exp = $mTrx->where('is_income', false)->sum('amount');
+
+            $periods['ytd']['labels'][]  = $mDate->translatedFormat('M Y');
+            $periods['ytd']['inflow'][]  = (float) $inc;
+            $periods['ytd']['outflow'][] = (float) $exp;
+            $periods['ytd']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 6. 1TH (12 Bulan Terakhir)
+        for ($i = 11; $i >= 0; $i--) {
+            $mDate = $now->copy()->subMonths($i);
+            $mKey = $mDate->format('Y-m');
+            $mTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m') === $mKey);
+            $inc = $mTrx->where('is_income', true)->sum('amount');
+            $exp = $mTrx->where('is_income', false)->sum('amount');
+
+            $periods['1th']['labels'][]  = $mDate->translatedFormat('M Y');
+            $periods['1th']['inflow'][]  = (float) $inc;
+            $periods['1th']['outflow'][] = (float) $exp;
+            $periods['1th']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 7. 5TH (5 Tahun Terakhir)
+        for ($i = 4; $i >= 0; $i--) {
+            $yDate = $now->copy()->subYears($i);
+            $yKey = $yDate->format('Y');
+            $yTrx = $transactions->filter(fn($t) => $t->created_at->format('Y') === $yKey);
+            $inc = $yTrx->where('is_income', true)->sum('amount');
+            $exp = $yTrx->where('is_income', false)->sum('amount');
+
+            $periods['5th']['labels'][]  = $yKey;
+            $periods['5th']['inflow'][]  = (float) $inc;
+            $periods['5th']['outflow'][] = (float) $exp;
+            $periods['5th']['net'][]     = (float) ($inc - $exp);
+        }
+
+        // 8. Maks (All Data Grouped by Month)
+        $periods['maks'] = $periods['1th'];
+
+        // Channel Breakdown
         $channelTotals = [];
-        $totalInflow   = 0.0;
-        $totalOutflow  = 0.0;
-
         foreach ($transactions as $trx) {
-            $dateLabel = $trx->created_at->format('d M');
-            if (!isset($groupedByDate[$dateLabel])) {
-                $groupedByDate[$dateLabel] = ['inflow' => 0.0, 'outflow' => 0.0];
-            }
-
-            if ($trx->is_income) {
-                $groupedByDate[$dateLabel]['inflow'] += $trx->amount;
-                $totalInflow += $trx->amount;
-            } else {
-                $groupedByDate[$dateLabel]['outflow'] += $trx->amount;
-                $totalOutflow += $trx->amount;
-            }
-
-            // Channel aggregation
             $ch = $trx->channel ?: 'Lainnya';
             if (!isset($channelTotals[$ch])) {
                 $channelTotals[$ch] = 0.0;
@@ -277,33 +358,17 @@ class XenditService
             $channelTotals[$ch] += $trx->amount;
         }
 
-        // Prepare chart arrays
-        $labels  = array_keys($groupedByDate);
-        $inflows = [];
-        $outflows = [];
-        $nets    = [];
-
-        foreach ($groupedByDate as $d => $vals) {
-            $inflows[]  = $vals['inflow'];
-            $outflows[] = $vals['outflow'];
-            $nets[]     = $vals['inflow'] - $vals['outflow'];
-        }
-
         return [
-            'trends' => [
-                'labels'  => array_reverse($labels),
-                'inflow'  => array_reverse($inflows),
-                'outflow' => array_reverse($outflows),
-                'net'     => array_reverse($nets),
-            ],
+            'chart_trends'      => $periods,
             'channel_breakdown' => [
                 'labels' => array_keys($channelTotals),
                 'totals' => array_values($channelTotals),
             ],
-            'total_inflow'  => $totalInflow,
-            'total_outflow' => $totalOutflow,
+            'total_inflow'      => $transactions->where('is_income', true)->sum('amount'),
+            'total_outflow'     => $transactions->where('is_income', false)->sum('amount'),
         ];
     }
 }
+
 
 
