@@ -34,6 +34,9 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::post('/dashboard/seed-dummy', [DashboardController::class, 'seedDummyData'])->name('dashboard.seed-dummy');
 
+    // xendit
+    Route::post('/xendit/balance/refresh', [DashboardController::class, 'refreshXenditBalance'])->name('xendit.balance.refresh');
+
     // data role
     Route::prefix('role')->group(function () {
         Route::get('/', [RoleController::class, 'index'])->name('role.index')->can('lihat level');

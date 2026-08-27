@@ -4,23 +4,52 @@ namespace App\Http\Controllers\Pages;
 
 use App\Http\Controllers\Controller;
 use App\Services\Finance\FinanceSummaryService;
+use App\Services\Xendit\XenditService;
 use Spatie\Activitylog\Models\Activity;
 
 class DashboardController extends Controller
 {
-    public function __construct(private FinanceSummaryService $summaryService) {}
+    public function __construct(
+        private FinanceSummaryService $summaryService,
+        private XenditService $xenditService
+    ) {}
 
     public function index()
     {
+        $xenditConfigured   = $this->xenditService->isConfigured();
+        $xenditBalances     = $xenditConfigured ? $this->xenditService->getAllBalances() : null;
+        $xenditTransactions = $xenditConfigured ? $this->xenditService->getRecentTransactions(10) : collect();
+        $xenditChartData    = $xenditConfigured ? $this->xenditService->getXenditChartData() : null;
+
+        // Paginated activities (for pagination UI)
+        $latestActivities = Activity::query()
+            ->whereIn('log_name', ['finance', 'external_finance'])
+            ->with(['causer', 'subject'])
+            ->latest('id')
+            ->paginate(10, ['*'], 'log_page');
+
         return view('pages.dashboard', [
-            'summary' => $this->summaryService->dashboard(),
-            'latestActivities' => Activity::query()
-                ->whereIn('log_name', ['finance', 'external_finance'])
-                ->with(['causer', 'subject'])
-                ->latest('id')
-                ->paginate(5, ['*'], 'log_page'),
+            'summary'            => $this->summaryService->dashboard(),
+            'xenditConfigured'   => $xenditConfigured,
+            'xenditBalances'     => $xenditBalances,
+            'xenditTransactions' => $xenditTransactions,
+            'xenditChartData'    => $xenditChartData,
+            'latestActivities'   => $latestActivities,
         ]);
     }
+
+    /**
+     * Hapus cache saldo Xendit dan redirect kembali ke dashboard.
+     */
+    public function refreshXenditBalance()
+    {
+        \Illuminate\Support\Facades\Cache::forget('xendit_balance_CASH');
+        \Illuminate\Support\Facades\Cache::forget('xendit_balance_HOLDING');
+        \Illuminate\Support\Facades\Cache::forget('xendit_balance_TAX');
+
+        return redirect()->route('dashboard')->with('success', 'Saldo Xendit berhasil diperbarui!');
+    }
+
     public function seedDummyData()
     {
         $incomeCategories = \App\Models\FinanceCategory::where('type', 'income')->pluck('id')->toArray();

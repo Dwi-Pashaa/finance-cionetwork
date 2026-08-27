@@ -631,6 +631,56 @@
         font-weight: 600;
     }
 
+    /* Log Tab Pills Styling */
+    .cio-log-tabs {
+        background: #F1F5F9;
+        padding: 4px;
+        border-radius: var(--cio-radius-md);
+        gap: 4px;
+        border: 1px solid var(--cio-border);
+    }
+
+    .cio-log-tabs .nav-link {
+        color: var(--cio-text-secondary);
+        font-size: 13px;
+        font-weight: 600;
+        padding: 7px 16px;
+        border-radius: var(--cio-radius-sm);
+        border: none;
+        background: transparent;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .cio-log-tabs .nav-link:hover {
+        color: var(--cio-primary);
+        background: rgba(255, 255, 255, 0.6);
+    }
+
+    .cio-log-tabs .nav-link.active {
+        color: #FFFFFF;
+        background: var(--cio-primary);
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+        font-weight: 700;
+    }
+
+    .cio-log-tabs .nav-link.active .badge-tab {
+        background: rgba(255, 255, 255, 0.25);
+        color: #FFFFFF;
+    }
+
+    .cio-log-tabs .badge-tab {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        background: #E2E8F0;
+        color: var(--cio-text-secondary);
+        transition: all 0.2s ease;
+    }
+
     /* Detailed Activity Log Styling */
     .cio-log-list {
         display: flex;

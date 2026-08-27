@@ -41,4 +41,9 @@ return [
         'oauth_url' => env('QONTAK_OAUTH_URL', 'https://api.mekari.com/oauth/token'),
     ],
 
+    'xendit' => [
+        'secret_key' => env('XENDIT_SECRET_KEY'),
+        'base_url' => env('XENDIT_BASE_URL', 'https://api.xendit.co'),
+    ],
+
 ];
