@@ -32,6 +32,70 @@ class BalanceEndpointTest extends TestCase
         $this->getJson('/api/v1/balance')->assertStatus(401);
     }
 
+    public function test_can_deduct_balance_successfully(): void
+    {
+        [$client, $secret] = $this->register('WEB_PAY', '1000000.00');
+
+        $payload = [
+            'amount' => 50000,
+            'reference_id' => 'KB-12',
+            'description' => 'Pembayaran kasbon karyawan Toni',
+            'category' => 'kasbon',
+            'note' => 'Potong saldo kasbon karyawan',
+        ];
+
+        $response = $this->postJson(
+            '/api/v1/balance/deduct',
+            $payload,
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/deduct', $payload)
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Saldo berhasil dipotong')
+            ->assertJsonPath('data.client_code', 'WEB_PAY')
+            ->assertJsonPath('data.amount_deducted', 50000)
+            ->assertJsonPath('data.current_balance', 950000)
+            ->assertJsonPath('data.reference_id', 'KB-12');
+
+        $this->assertDatabaseHas('api_client_balances', [
+            'api_client_id' => $client->id,
+            'balance' => '950000.00',
+        ]);
+
+        $this->assertDatabaseHas('activity_log', [
+            'log_name' => 'external_finance',
+            'event' => 'deduct_balance',
+            'description' => 'Pembayaran kasbon karyawan Toni',
+        ]);
+    }
+
+    public function test_deduct_balance_fails_when_insufficient(): void
+    {
+        [$client, $secret] = $this->register('WEB_POOR', '25000.00');
+
+        $payload = [
+            'amount' => 50000,
+            'reference_id' => 'KB-13',
+            'description' => 'Pembayaran kasbon karyawan Budi',
+        ];
+
+        $response = $this->postJson(
+            '/api/v1/balance/deduct',
+            $payload,
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/deduct', $payload)
+        );
+
+        $response->assertStatus(400)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_code', 'INSUFFICIENT_BALANCE');
+
+        $this->assertDatabaseHas('api_client_balances', [
+            'api_client_id' => $client->id,
+            'balance' => '25000.00',
+        ]);
+    }
+
     private function register(string $code, string $balance): array
     {
         $result = app(ApiClientService::class)->register([
@@ -45,14 +109,15 @@ class BalanceEndpointTest extends TestCase
         return [$result['client'], $result['secret']];
     }
 
-    private function headers(ApiClient $client, string $secret): array
+    private function headers(ApiClient $client, string $secret, string $method = 'GET', string $path = '/api/v1/balance', array $payload = []): array
     {
         $keyId = $client->activeCredentials()->first()->key_id;
         $timestamp = (string) now()->getTimestamp();
         $nonce = uniqid('nonce_', true);
+        $body = $payload === [] ? '[]' : json_encode($payload);
 
         $canonical = implode("\n", [
-            'GET', '/api/v1/balance', $client->client_id, $keyId, $timestamp, $nonce, hash('sha256', '[]'),
+            $method, $path, $client->client_id, $keyId, $timestamp, $nonce, hash('sha256', $body),
         ]);
 
         return [
