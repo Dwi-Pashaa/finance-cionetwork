@@ -70,31 +70,92 @@ class BalanceEndpointTest extends TestCase
         ]);
     }
 
-    public function test_deduct_balance_fails_when_insufficient(): void
+    public function test_can_refund_balance_successfully(): void
     {
-        [$client, $secret] = $this->register('WEB_POOR', '25000.00');
+        [$client, $secret] = $this->register('WEB_REFUND', '1000000.00');
 
         $payload = [
-            'amount' => 50000,
-            'reference_id' => 'KB-13',
-            'description' => 'Pembayaran kasbon karyawan Budi',
+            'amount' => 500000,
+            'reference_id' => 'REFUND-GAJI-5-9-1787929941',
+            'description' => 'Refund gaji Budi Santoso — transfer gagal (INVALID_DESTINATION)',
+            'reason' => 'INVALID_DESTINATION',
         ];
 
         $response = $this->postJson(
-            '/api/v1/balance/deduct',
+            '/api/v1/balance/refund',
             $payload,
-            $this->headers($client, $secret, 'POST', '/api/v1/balance/deduct', $payload)
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/refund', $payload)
         );
 
-        $response->assertStatus(400)
-            ->assertJsonPath('success', false)
-            ->assertJsonPath('error_code', 'INSUFFICIENT_BALANCE');
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Saldo berhasil dikembalikan')
+            ->assertJsonPath('data.reference_id', 'REFUND-GAJI-5-9-1787929941')
+            ->assertJsonPath('data.amount', 500000)
+            ->assertJsonPath('data.balance_after', 1500000);
 
         $this->assertDatabaseHas('api_client_balances', [
             'api_client_id' => $client->id,
-            'balance' => '25000.00',
+            'balance' => '1500000.00',
+        ]);
+
+        $this->assertDatabaseHas('activity_log', [
+            'log_name' => 'external_finance',
+            'event' => 'refund_balance',
+            'description' => 'Refund gaji Budi Santoso — transfer gagal (INVALID_DESTINATION)',
         ]);
     }
+
+    public function test_refund_balance_fails_on_duplicate_reference_id(): void
+    {
+        [$client, $secret] = $this->register('WEB_REFUND_DUP', '1000000.00');
+
+        $payload = [
+            'amount' => 200000,
+            'reference_id' => 'REFUND-DUP-123',
+            'description' => 'Refund initial',
+            'reason' => 'TRANSFER_FAILED',
+        ];
+
+        $first = $this->postJson(
+            '/api/v1/balance/refund',
+            $payload,
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/refund', $payload)
+        );
+        $first->assertOk();
+
+        // Coba refund dengan reference_id yang sama
+        $second = $this->postJson(
+            '/api/v1/balance/refund',
+            $payload,
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/refund', $payload)
+        );
+        $second->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('errors.reference_id.0', 'Reference ID sudah digunakan');
+    }
+
+    public function test_refund_balance_validation_fails_on_invalid_amount(): void
+    {
+        [$client, $secret] = $this->register('WEB_REFUND_VAL', '1000000.00');
+
+        $payload = [
+            'amount' => 0,
+            'reference_id' => 'REFUND-ZERO-123',
+            'description' => 'Refund zero amount',
+        ];
+
+        $response = $this->postJson(
+            '/api/v1/balance/refund',
+            $payload,
+            $this->headers($client, $secret, 'POST', '/api/v1/balance/refund', $payload)
+        );
+
+        $response->assertStatus(422)
+            ->assertJsonPath('status', 'error');
+    }
+
 
     private function register(string $code, string $balance): array
     {

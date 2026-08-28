@@ -13,6 +13,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/ping', [PingController::class, 'index'])->name('api.v1.ping');
         Route::get('/balance', [BalanceController::class, 'index'])->name('api.v1.balance');
         Route::post('/balance/deduct', [BalanceController::class, 'deduct'])->name('api.v1.balance.deduct');
+        Route::post('/balance/refund', [BalanceController::class, 'refund'])->name('api.v1.balance.refund');
         Route::get('/history', [FinanceHistoryController::class, 'index'])->name('api.v1.history.index');
         Route::post('/history', [FinanceHistoryController::class, 'store'])->name('api.v1.history.store');
     });
