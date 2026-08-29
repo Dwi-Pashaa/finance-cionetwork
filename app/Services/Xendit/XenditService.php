@@ -96,7 +96,7 @@ class XenditService
      * @param  array  $filters Tambahan filter: types, statuses, created[gte], created[lte], dll.
      * @return array
      */
-    public function getTransactions(int $limit = 10, array $filters = []): array
+    public function getTransactions(int $limit = 10, array $filters = [], bool $useCache = true): array
     {
         if (!$this->isConfigured()) {
             return [];
@@ -104,7 +104,11 @@ class XenditService
 
         $cacheKey = 'xendit_transactions_' . md5(json_encode(array_merge($filters, ['limit' => $limit])));
 
-        return \Illuminate\Support\Facades\Cache::remember($cacheKey, now()->addMinutes(3), function () use ($limit, $filters) {
+        if (!$useCache) {
+            Cache::forget($cacheKey);
+        }
+
+        return Cache::remember($cacheKey, now()->addMinutes(3), function () use ($limit, $filters) {
             try {
                 $response = Http::withBasicAuth($this->secretKey, '')
                     ->timeout(10)
@@ -127,28 +131,48 @@ class XenditService
     }
 
     /**
+     * Hapus semua cache terkait Xendit (saldo dan riwayat transaksi/grafik).
+     */
+    public function clearCache(): void
+    {
+        Cache::forget('xendit_balance_CASH');
+        Cache::forget('xendit_balance_HOLDING');
+        Cache::forget('xendit_balance_TAX');
+
+        // Hapus cache transaksi & grafik untuk limit umum
+        Cache::forget('xendit_transactions_' . md5(json_encode(['limit' => 10])));
+        Cache::forget('xendit_transactions_' . md5(json_encode(['limit' => 100])));
+    }
+
+    /**
      * Ambil transaksi terbaru Xendit untuk digabung di dashboard feed log.
      * Otomatis normalize ke format yang mudah di-render di Blade dengan pesan deskriptif.
      *
-     * @param  int $limit
+     * @param  int  $limit
+     * @param  bool $useCache
      * @return \Illuminate\Support\Collection
      */
-    public function getRecentTransactions(int $limit = 10): \Illuminate\Support\Collection
+    public function getRecentTransactions(int $limit = 10, bool $useCache = true): \Illuminate\Support\Collection
     {
-        $raw = $this->getTransactions($limit);
+        $raw = $this->getTransactions($limit, [], $useCache);
+        $appTz = config('app.timezone', 'Asia/Jakarta');
 
-        return collect($raw)->map(function (array $trx) {
-            $type    = strtoupper($trx['type'] ?? 'UNKNOWN');
-            $status  = strtoupper($trx['status'] ?? 'UNKNOWN');
-            $amount  = (float) ($trx['amount'] ?? 0);
-            $fee     = (float) ($trx['fee'] ?? 0);
-            $net     = (float) ($trx['net_amount'] ?? ($amount - $fee));
-            $channel = $trx['channel_code']
+        return collect($raw)->map(function (array $trx) use ($appTz) {
+            $type     = strtoupper($trx['type'] ?? 'UNKNOWN');
+            $status   = strtoupper($trx['status'] ?? 'UNKNOWN');
+            $cashflow = strtoupper($trx['cashflow'] ?? '');
+            $amount   = (float) ($trx['amount'] ?? 0);
+            $fee      = (float) ($trx['fee'] ?? 0);
+            $net      = (float) ($trx['net_amount'] ?? ($amount - $fee));
+            $channel  = $trx['channel_code']
                 ?? $trx['channel_category']
                 ?? 'Xendit';
 
             // Determine credit/debit direction
-            $isIncome = in_array($type, ['PAYMENT', 'DEPOSIT', 'CREDIT', 'TOPUP', 'REFUND_REVERSAL']);
+            $isIncome = ($cashflow === 'MONEY_IN') || in_array($type, [
+                'PAYMENT', 'DEPOSIT', 'CREDIT', 'TOPUP', 'REFUND_REVERSAL',
+                'INVOICE', 'QR_CODE', 'EWALLET', 'DIRECT_DEBIT', 'VIRTUAL_ACCOUNT', 'CARD'
+            ]);
 
             // Generate human-readable narrative message similar to activity logs
             $message = $this->formatTransactionMessage($type, $status, $amount, $channel, $trx);
@@ -184,13 +208,13 @@ class XenditService
                 'reference_id'  => $trx['reference_id'] ?? null,
                 'xendit_id'     => $trx['id'] ?? null,
 
-                // Timestamps
+                // Timestamps converted to app timezone (WIB/Asia/Jakarta)
                 'created_at'    => isset($trx['created'])
-                    ? \Carbon\Carbon::parse($trx['created'])
-                    : \Carbon\Carbon::now(),
+                    ? \Carbon\Carbon::parse($trx['created'])->setTimezone($appTz)
+                    : \Carbon\Carbon::now($appTz),
                 'updated_at'    => isset($trx['updated'])
-                    ? \Carbon\Carbon::parse($trx['updated'])
-                    : \Carbon\Carbon::now(),
+                    ? \Carbon\Carbon::parse($trx['updated'])->setTimezone($appTz)
+                    : \Carbon\Carbon::now($appTz),
             ];
         });
     }
@@ -227,12 +251,14 @@ class XenditService
      * Ambil data tren multi-periode dan distribusi untuk grafik Transaksi Xendit.
      * Mendukung filter trading style: 1HR, 7HR, 1BLN, 6BLN, YTD, 1TH, 5TH, Maks.
      *
+     * @param  bool $useCache
      * @return array
      */
-    public function getXenditChartData(): array
+    public function getXenditChartData(bool $useCache = true): array
     {
-        $transactions = $this->getRecentTransactions(100);
-        $now = now();
+        $transactions = $this->getRecentTransactions(100, $useCache);
+        $appTz = config('app.timezone', 'Asia/Jakarta');
+        $now = now($appTz);
 
         $periods = [
             '1hr'  => ['labels' => [], 'inflow' => [], 'outflow' => [], 'net' => []],
@@ -246,7 +272,8 @@ class XenditService
         ];
 
         // 1. 1HR (Breakdown Per Jam Hari Ini 00:00 - 23:00)
-        $todayTrx = $transactions->filter(fn($t) => $t->created_at->isToday());
+        $todayStr = $now->format('Y-m-d');
+        $todayTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m-d') === $todayStr);
         for ($h = 0; $h < 24; $h++) {
             $hLabel = sprintf('%02d:00', $h);
             $hTrx = $todayTrx->filter(fn($t) => (int) $t->created_at->format('H') === $h);

@@ -39,15 +39,13 @@ class DashboardController extends Controller
     }
 
     /**
-     * Hapus cache saldo Xendit dan redirect kembali ke dashboard.
+     * Hapus cache saldo & transaksi Xendit dan redirect kembali ke dashboard.
      */
     public function refreshXenditBalance()
     {
-        \Illuminate\Support\Facades\Cache::forget('xendit_balance_CASH');
-        \Illuminate\Support\Facades\Cache::forget('xendit_balance_HOLDING');
-        \Illuminate\Support\Facades\Cache::forget('xendit_balance_TAX');
+        $this->xenditService->clearCache();
 
-        return redirect()->route('dashboard')->with('success', 'Saldo Xendit berhasil diperbarui!');
+        return redirect()->route('dashboard')->with('success', 'Data & Saldo Xendit berhasil diperbarui!');
     }
 
     public function seedDummyData()

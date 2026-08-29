@@ -1173,6 +1173,9 @@
         document.querySelectorAll('button[data-bs-toggle="pill"]').forEach(function(btn) {
             btn.addEventListener('shown.bs.tab', function() {
                 window.dispatchEvent(new Event('resize'));
+                setTimeout(function() {
+                    window.dispatchEvent(new Event('resize'));
+                }, 100);
             });
         });
     });
