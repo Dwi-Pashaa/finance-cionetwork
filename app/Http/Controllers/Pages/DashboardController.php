@@ -17,9 +17,18 @@ class DashboardController extends Controller
     public function index()
     {
         $xenditConfigured   = $this->xenditService->isConfigured();
-        $xenditBalances     = $xenditConfigured ? $this->xenditService->getAllBalances() : null;
-        $xenditTransactions = $xenditConfigured ? $this->xenditService->getRecentTransactions(10) : collect();
-        $xenditChartData    = $xenditConfigured ? $this->xenditService->getXenditChartData() : null;
+        $xenditBalances     = null;
+        $xenditTransactions = collect();
+        $xenditChartData    = null;
+        $xenditSummary      = null;
+
+        if ($xenditConfigured) {
+            $xenditBalances     = $this->xenditService->getAllBalances();
+            $recent50           = $this->xenditService->getRecentTransactions(50);
+            $xenditTransactions = $recent50->take(10);
+            $xenditChartData    = $this->xenditService->getXenditChartData();
+            $xenditSummary      = $this->xenditService->getMonthlySummary();
+        }
 
         // Paginated activities (for pagination UI)
         $latestActivities = Activity::query()
@@ -34,6 +43,7 @@ class DashboardController extends Controller
             'xenditBalances'     => $xenditBalances,
             'xenditTransactions' => $xenditTransactions,
             'xenditChartData'    => $xenditChartData,
+            'xenditSummary'      => $xenditSummary,
             'latestActivities'   => $latestActivities,
         ]);
     }
@@ -44,6 +54,7 @@ class DashboardController extends Controller
     public function refreshXenditBalance()
     {
         $this->xenditService->clearCache();
+        $this->summaryService->clearCache();
 
         return redirect()->route('dashboard')->with('success', 'Data & Saldo Xendit berhasil diperbarui!');
     }

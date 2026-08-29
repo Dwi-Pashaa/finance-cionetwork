@@ -34,59 +34,87 @@ class XenditService
      */
     public function getBalance(string $accountType = 'CASH', bool $useCache = true): float
     {
+        $balances = $this->getAllBalances($useCache);
+        $key = strtolower($accountType);
+
+        return (float) ($balances[$key] ?? 0.0);
+    }
+
+    /**
+     * Ambil semua tipe saldo (CASH, HOLDING, TAX) secara concurrent (parallel HTTP pool).
+     *
+     * @param  bool $useCache
+     * @return array{cash: float, holding: float, tax: float, total: float}
+     */
+    public function getAllBalances(bool $useCache = true): array
+    {
         if (!$this->isConfigured()) {
-            Log::warning('[Xendit] Secret Key belum dikonfigurasi pada .env (XENDIT_SECRET_KEY).');
-            return 0.0;
+            return ['cash' => 0.0, 'holding' => 0.0, 'tax' => 0.0, 'total' => 0.0];
         }
 
-        $cacheKey = "xendit_balance_{$accountType}";
-
+        $cacheKey = 'xendit_all_balances';
         if ($useCache && Cache::has($cacheKey)) {
-            return (float) Cache::get($cacheKey);
+            return Cache::get($cacheKey);
         }
 
         try {
-            $response = Http::withoutVerifying()
-                ->withBasicAuth($this->secretKey, '')
-                ->timeout(10)
-                ->get("{$this->baseUrl}/balance", [
-                    'account_type' => $accountType,
-                ]);
+            $responses = Http::pool(fn (\Illuminate\Http\Client\Pool $pool) => [
+                $pool->as('cash')->withoutVerifying()->withBasicAuth($this->secretKey, '')->timeout(10)->get("{$this->baseUrl}/balance", ['account_type' => 'CASH']),
+                $pool->as('holding')->withoutVerifying()->withBasicAuth($this->secretKey, '')->timeout(10)->get("{$this->baseUrl}/balance", ['account_type' => 'HOLDING']),
+                $pool->as('tax')->withoutVerifying()->withBasicAuth($this->secretKey, '')->timeout(10)->get("{$this->baseUrl}/balance", ['account_type' => 'TAX']),
+            ]);
 
-            if ($response->successful()) {
-                $balance = (float) ($response->json('balance') ?? 0);
+            $cash    = (float) ($responses['cash']->successful() ? ($responses['cash']->json('balance') ?? 0) : 0);
+            $holding = (float) ($responses['holding']->successful() ? ($responses['holding']->json('balance') ?? 0) : 0);
+            $tax     = (float) ($responses['tax']->successful() ? ($responses['tax']->json('balance') ?? 0) : 0);
 
-                // Cache saldo selama 5 menit
-                Cache::put($cacheKey, $balance, now()->addMinutes(5));
+            $result = [
+                'cash'    => $cash,
+                'holding' => $holding,
+                'tax'     => $tax,
+                'total'   => $cash + $holding + $tax,
+            ];
 
-                return $balance;
-            }
+            Cache::put($cacheKey, $result, now()->addMinutes(5));
+            Cache::put('xendit_balance_CASH', $cash, now()->addMinutes(5));
+            Cache::put('xendit_balance_HOLDING', $holding, now()->addMinutes(5));
+            Cache::put('xendit_balance_TAX', $tax, now()->addMinutes(5));
 
-            Log::error('[Xendit] Gagal mengambil saldo. Status: ' . $response->status() . ' | Body: ' . $response->body());
-            return 0.0;
-
+            return $result;
         } catch (\Throwable $e) {
-            Log::error('[Xendit] Error koneksi API: ' . $e->getMessage());
-            return 0.0;
+            Log::error('[Xendit] Error concurrent balances: ' . $e->getMessage());
+            return ['cash' => 0.0, 'holding' => 0.0, 'tax' => 0.0, 'total' => 0.0];
         }
     }
 
     /**
-     * Ambil semua tipe saldo (CASH, HOLDING, TAX) sekaligus.
+     * Ambil ringkasan performa finansial Xendit bulan berjalan dan saldo kumulatif.
      *
-     * @return array{cash: float, holding: float, tax: float, total: float}
+     * @param  bool $useCache
+     * @return array{monthly_inflow: float, monthly_outflow: float, monthly_net: float, cumulative_balance: float, balances: array}
      */
-    public function getAllBalances(): array
+    public function getMonthlySummary(bool $useCache = true): array
     {
-        $cash    = $this->getBalance('CASH');
-        $holding = $this->getBalance('HOLDING');
-        $tax     = $this->getBalance('TAX');
+        $transactions = $this->getRecentTransactions(50, $useCache);
+        $appTz = config('app.timezone', 'Asia/Jakarta');
+        $now = now($appTz);
+        $thisMonthKey = $now->format('Y-m');
+
+        $thisMonthTrx = $transactions->filter(fn($t) => $t->created_at->format('Y-m') === $thisMonthKey);
+
+        $inflow = (float) $thisMonthTrx->where('is_income', true)->sum('amount');
+        $outflow = (float) $thisMonthTrx->where('is_income', false)->sum('amount');
+        $net = $inflow - $outflow;
+
+        $balances = $this->getAllBalances($useCache);
+        $cumulativeBalance = $balances['total'] ?? 0;
 
         return [
-            'cash'    => $cash,
-            'holding' => $holding,
-            'tax'     => $tax,
-            'total'   => $cash + $holding + $tax,
+            'monthly_inflow'     => $inflow,
+            'monthly_outflow'    => $outflow,
+            'monthly_net'        => $net,
+            'cumulative_balance' => $cumulativeBalance,
+            'balances'           => $balances,
         ];
     }
 
@@ -141,6 +169,7 @@ class XenditService
      */
     public function clearCache(): void
     {
+        Cache::forget('xendit_all_balances');
         Cache::forget('xendit_balance_CASH');
         Cache::forget('xendit_balance_HOLDING');
         Cache::forget('xendit_balance_TAX');
@@ -171,9 +200,16 @@ class XenditService
             $amount   = (float) ($trx['amount'] ?? 0);
             $fee      = (float) ($trx['fee'] ?? 0);
             $net      = (float) ($trx['net_amount'] ?? ($amount - $fee));
-            $channel  = $trx['channel_code']
+            $rawChannel = $trx['channel_code']
                 ?? $trx['channel_category']
                 ?? 'Xendit';
+            $channelCategory = $trx['channel_category'] ?? null;
+
+            // Formatted channel name (e.g. Bank BCA, ShopeePay, etc.)
+            $formattedChannel = $this->formatChannelName($rawChannel);
+            
+            // Clean broad category (e.g. Transfer Bank & VA, E-Wallet, QRIS, etc.)
+            $paymentCategory = $this->categorizePaymentMethod($rawChannel, $channelCategory, $type);
 
             // Determine credit/debit direction
             $isIncome = ($cashflow === 'MONEY_IN') || in_array($type, [
@@ -182,7 +218,7 @@ class XenditService
             ]);
 
             // Generate human-readable narrative message similar to activity logs
-            $message = $this->formatTransactionMessage($type, $status, $amount, $channel, $trx);
+            $message = $this->formatTransactionMessage($type, $status, $amount, $formattedChannel, $trx);
 
             $actionLabel = match ($type) {
                 'PAYMENT'      => 'PEMBAYARAN',
@@ -196,34 +232,139 @@ class XenditService
 
             return (object) [
                 // Source tag
-                'source'        => 'xendit',
+                'source'           => 'xendit',
 
                 // Display fields
-                'type'          => $type,
-                'action_label'  => $actionLabel,
-                'status'        => $status,
-                'amount'        => $amount,
-                'fee'           => $fee,
-                'net_amount'    => $net,
-                'currency'      => $trx['currency'] ?? 'IDR',
-                'is_income'     => $isIncome,
-                'message'       => $message,
+                'type'             => $type,
+                'action_label'     => $actionLabel,
+                'status'           => $status,
+                'amount'           => $amount,
+                'fee'              => $fee,
+                'net_amount'       => $net,
+                'currency'         => $trx['currency'] ?? 'IDR',
+                'is_income'        => $isIncome,
+                'message'          => $message,
 
                 // Description / reference
-                'description'   => $trx['description'] ?? $trx['reference_id'] ?? ($type . ' via ' . $channel),
-                'channel'       => $channel,
-                'reference_id'  => $trx['reference_id'] ?? null,
-                'xendit_id'     => $trx['id'] ?? null,
+                'description'      => $trx['description'] ?? $trx['reference_id'] ?? ($type . ' via ' . $formattedChannel),
+                'channel'          => $formattedChannel,
+                'raw_channel'      => $rawChannel,
+                'payment_category' => $paymentCategory,
+                'reference_id'     => $trx['reference_id'] ?? null,
+                'xendit_id'        => $trx['id'] ?? null,
 
                 // Timestamps converted to app timezone (WIB/Asia/Jakarta)
-                'created_at'    => isset($trx['created'])
+                'created_at'       => isset($trx['created'])
                     ? \Carbon\Carbon::parse($trx['created'])->setTimezone($appTz)
                     : \Carbon\Carbon::now($appTz),
-                'updated_at'    => isset($trx['updated'])
+                'updated_at'       => isset($trx['updated'])
                     ? \Carbon\Carbon::parse($trx['updated'])->setTimezone($appTz)
                     : \Carbon\Carbon::now($appTz),
             ];
         });
+    }
+
+    /**
+     * Kategorisasi metode pembayaran / channel Xendit ke kelompok rapi.
+     */
+    public function categorizePaymentMethod(?string $channelCode, ?string $channelCategory = null, ?string $type = null): string
+    {
+        $code = strtoupper($channelCode ?? '');
+        $cat  = strtoupper($channelCategory ?? '');
+        $t    = strtoupper($type ?? '');
+
+        // 1. QRIS
+        if (str_contains($code, 'QRIS') || str_contains($code, 'QR_CODE') || $cat === 'QR_CODE') {
+            return 'QRIS';
+        }
+
+        // 2. E-Wallet
+        if (
+            str_contains($code, 'SHOPEEPAY') || str_contains($code, 'DANA') ||
+            str_contains($code, 'OVO') || str_contains($code, 'LINKAJA') ||
+            str_contains($code, 'ASTRAPAY') || str_contains($code, 'JENIUSPAY') ||
+            str_contains($code, 'GOPAY') || $cat === 'EWALLET'
+        ) {
+            return 'E-Wallet';
+        }
+
+        // 3. Kartu Kredit / Debit
+        if (
+            str_contains($code, 'CARD') || str_contains($code, 'VISA') ||
+            str_contains($code, 'MASTERCARD') || str_contains($code, 'JCB') ||
+            $cat === 'CARDS'
+        ) {
+            return 'Kartu Kredit / Debit';
+        }
+
+        // 4. Retail / Minimarket
+        if (
+            str_contains($code, 'ALFAMART') || str_contains($code, 'INDOMARET') ||
+            str_contains($code, '7ELEVEN') || $cat === 'RETAIL_OUTLET'
+        ) {
+            return 'Gerai Retail';
+        }
+
+        // 5. PayLater
+        if (
+            str_contains($code, 'KREDIVO') || str_contains($code, 'AKULAKU') ||
+            str_contains($code, 'ATOME') || $cat === 'PAYLATER'
+        ) {
+            return 'PayLater / Cicilan';
+        }
+
+        // 6. Transfer Bank / Virtual Account / Disbursement
+        if (
+            str_contains($code, 'BCA') || str_contains($code, 'BRI') ||
+            str_contains($code, 'MANDIRI') || str_contains($code, 'BNI') ||
+            str_contains($code, 'CIMB') || str_contains($code, 'PERMATA') ||
+            str_contains($code, 'BJB') || str_contains($code, 'BSI') ||
+            str_contains($code, 'BNC') || str_contains($code, 'JAGO') ||
+            str_contains($code, 'BTPN') || str_contains($code, 'SAHABAT_SAMPOERNA') ||
+            $cat === 'BANK' || str_contains($code, 'VIRTUAL_ACCOUNT') ||
+            $t === 'DISBURSEMENT' || $t === 'PAYOUT'
+        ) {
+            return 'Transfer Bank & VA';
+        }
+
+        return 'Metode Lainnya';
+    }
+
+    /**
+     * Format nama channel Xendit agar mudah dibaca pengguna.
+     */
+    public function formatChannelName(?string $channel): string
+    {
+        if (empty($channel) || $channel === '-') {
+            return 'Xendit Gateway';
+        }
+
+        $upper = strtoupper($channel);
+
+        return match (true) {
+            str_contains($upper, 'BCA') => 'Bank BCA',
+            str_contains($upper, 'BRI') => 'Bank BRI',
+            str_contains($upper, 'MANDIRI') => 'Bank Mandiri',
+            str_contains($upper, 'BNI') => 'Bank BNI',
+            str_contains($upper, 'CIMB') => 'CIMB Niaga',
+            str_contains($upper, 'BJB') => 'Bank BJB',
+            str_contains($upper, 'PERMATA') => 'Bank Permata',
+            str_contains($upper, 'BSI') => 'Bank Syariah Indonesia (BSI)',
+            str_contains($upper, 'JAGO') => 'Bank Jago',
+            str_contains($upper, 'SHOPEEPAY') => 'ShopeePay',
+            str_contains($upper, 'DANA') => 'DANA',
+            str_contains($upper, 'OVO') => 'OVO',
+            str_contains($upper, 'LINKAJA') => 'LinkAja',
+            str_contains($upper, 'ASTRAPAY') => 'AstraPay',
+            str_contains($upper, 'GOPAY') => 'GoPay',
+            str_contains($upper, 'QRIS') => 'QRIS',
+            str_contains($upper, 'ALFAMART') => 'Alfamart',
+            str_contains($upper, 'INDOMARET') => 'Indomaret',
+            str_contains($upper, 'KREDIVO') => 'Kredivo',
+            str_contains($upper, 'AKULAKU') => 'Akulaku',
+            $upper === 'BANK' => 'Transfer Bank',
+            default => trim(str_replace(['ID_', '_'], ['', ' '], $channel)) ?: 'Xendit',
+        };
     }
 
     /**
@@ -382,21 +523,24 @@ class XenditService
         // 8. Maks (All Data Grouped by Month)
         $periods['maks'] = $periods['1th'];
 
-        // Channel Breakdown
-        $channelTotals = [];
+        // Payment Method Category Breakdown (Clean Grouping)
+        $categoryTotals = [];
         foreach ($transactions as $trx) {
-            $ch = $trx->channel ?: 'Lainnya';
-            if (!isset($channelTotals[$ch])) {
-                $channelTotals[$ch] = 0.0;
+            $cat = $trx->payment_category ?: 'Metode Lainnya';
+            if (!isset($categoryTotals[$cat])) {
+                $categoryTotals[$cat] = 0.0;
             }
-            $channelTotals[$ch] += $trx->amount;
+            $categoryTotals[$cat] += $trx->amount;
         }
+
+        // Sort descending by total amount
+        arsort($categoryTotals);
 
         return [
             'chart_trends'      => $periods,
             'channel_breakdown' => [
-                'labels' => array_keys($channelTotals),
-                'totals' => array_values($channelTotals),
+                'labels' => array_keys($categoryTotals),
+                'totals' => array_values($categoryTotals),
             ],
             'total_inflow'      => $transactions->where('is_income', true)->sum('amount'),
             'total_outflow'     => $transactions->where('is_income', false)->sum('amount'),

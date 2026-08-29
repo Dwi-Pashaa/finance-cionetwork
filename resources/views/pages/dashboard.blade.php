@@ -217,8 +217,45 @@
     @endforeach
 </div>
 
-{{-- Xendit Balance Widget --}}
+{{-- Xendit Balance & Monthly Summary Widget --}}
 @if($xenditConfigured && $xenditBalances)
+@php
+    $xenditInflow  = $xenditSummary['monthly_inflow'] ?? 0;
+    $xenditOutflow = $xenditSummary['monthly_outflow'] ?? 0;
+    $xenditNet     = $xenditSummary['monthly_net'] ?? 0;
+    $xenditTotal   = $xenditSummary['cumulative_balance'] ?? ($xenditBalances['total'] ?? 0);
+
+    $xMetrics = [
+        [
+            'label' => 'Saldo Masuk Bulan Ini',
+            'value' => $xenditInflow,
+            'class' => 'success',
+            'trend' => 'Penerimaan Gateway (Inflow)',
+            'icon'  => '<path d="M12 19V5"/><path d="M5 12l7-7l7 7"/>',
+        ],
+        [
+            'label' => 'Pengeluaran Bulan Ini',
+            'value' => $xenditOutflow,
+            'class' => 'danger',
+            'trend' => 'Penarikan & Payout (Outflow)',
+            'icon'  => '<path d="M12 5v14"/><path d="M5 12l7 7l7-7"/>',
+        ],
+        [
+            'label' => 'Net Bulan Ini',
+            'value' => $xenditNet,
+            'class' => ($xenditNet >= 0) ? 'success' : 'danger',
+            'trend' => ($xenditNet >= 0) ? 'Surplus Mutasi Gateway' : 'Defisit Mutasi Gateway',
+            'icon'  => '<path d="M4 19h16"/><path d="M7 16l4-4l3 3l5-7"/>',
+        ],
+        [
+            'label' => 'Saldo Kumulatif Xendit',
+            'value' => $xenditTotal,
+            'class' => 'info',
+            'trend' => 'Total Akun (Cash + Hold + Tax)',
+            'icon'  => '<path d="M3 11l19 -9l-9 19l-2 -8l-8 -2z"/>',
+        ],
+    ];
+@endphp
 <div class="card cio-card mb-4">
     <div class="cio-card-header d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-3">
         <div class="d-flex align-items-center gap-3">
@@ -228,8 +265,8 @@
                 </svg>
             </span>
             <div>
-                <h3 class="cio-title">Saldo Xendit</h3>
-                <div class="cio-subtitle">Realtime balance akun Xendit payment gateway</div>
+                <h3 class="cio-title">Ringkasan & Saldo Xendit</h3>
+                <div class="cio-subtitle">Performa mutasi bulan <strong>{{ \Carbon\Carbon::now()->translatedFormat('F Y') }}</strong> & realtime balance akun gateway</div>
             </div>
         </div>
         <div class="d-flex align-items-center gap-2">
@@ -246,65 +283,92 @@
             </form>
         </div>
     </div>
-    <div class="card-body">
-        <div class="row g-3">
-            {{-- CASH --}}
-            <div class="col-sm-4">
-                <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
-                    <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:42px;height:42px;background:#2563eb;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6l-10 13l-10 -13z"/><path d="M8 9l4 10l4 -10"/><path d="M3 9h18"/></svg>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #1e40af;">Cash</div>
-                        <div style="font-size: 20px; font-weight: 800; color: #1e3a8a; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
-                            Rp {{ number_format($xenditBalances['cash'], 0, ',', '.') }}
+    <div class="card-body p-3 p-md-4">
+        {{-- 4 Metric Cards for Xendit --}}
+        <div class="row g-3 mb-4">
+            @foreach ($xMetrics as $xm)
+                <div class="col-sm-6 col-xl-3">
+                    <div class="card cio-card cio-metric-card {{ $xm['class'] }} h-100" style="box-shadow: none; border: 1px solid #e2e8f0; background: #fafafa;">
+                        <div class="card-body p-3">
+                            <div class="d-flex align-items-start justify-content-between gap-2">
+                                <div>
+                                    <div class="cio-metric-label" style="font-size: 12px;">{{ $xm['label'] }}</div>
+                                    <div class="cio-metric-value" style="font-size: 18px;">
+                                        {{ ($xm['value'] < 0 ? '-' : '') }}Rp {{ number_format(abs($xm['value']), 0, ',', '.') }}
+                                    </div>
+                                    <div class="cio-metric-trend text-muted mt-1">
+                                        <span class="badge bg-light text-secondary border fw-medium px-2 py-0.5" style="font-size: 10px;">{{ $xm['trend'] }}</span>
+                                    </div>
+                                </div>
+                                <span class="cio-icon-avatar {{ $xm['class'] }}" style="width: 36px; height: 36px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{!! $xm['icon'] !!}</svg>
+                                </span>
+                            </div>
                         </div>
-                        <div style="font-size: 11px; color: #3b82f6; font-weight: 600;">Saldo siap tarik</div>
                     </div>
                 </div>
-            </div>
-
-            {{-- HOLDING --}}
-            <div class="col-sm-4">
-                <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border: 1px solid #fde68a;">
-                    <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:42px;height:42px;background:#d97706;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #92400e;">Holding</div>
-                        <div style="font-size: 20px; font-weight: 800; color: #78350f; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
-                            Rp {{ number_format($xenditBalances['holding'], 0, ',', '.') }}
-                        </div>
-                        <div style="font-size: 11px; color: #d97706; font-weight: 600;">Dana ditahan sementara</div>
-                    </div>
-                </div>
-            </div>
-
-            {{-- TAX --}}
-            <div class="col-sm-4">
-                <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 1px solid #a7f3d0;">
-                    <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:42px;height:42px;background:#059669;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M9 15l2 2l4 -4"/></svg>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #065f46;">Tax</div>
-                        <div style="font-size: 20px; font-weight: 800; color: #064e3b; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
-                            Rp {{ number_format($xenditBalances['tax'], 0, ',', '.') }}
-                        </div>
-                        <div style="font-size: 11px; color: #059669; font-weight: 600;">Cadangan pajak</div>
-                    </div>
-                </div>
-            </div>
+            @endforeach
         </div>
 
-        {{-- Total --}}
-        <div class="mt-3 pt-3 d-flex align-items-center justify-content-between" style="border-top: 1px solid #e2e8f0;">
-            <div class="d-flex align-items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M3 10h18"/><path d="M5 6l7-3l7 3"/><path d="M4 10v11"/><path d="M20 10v11"/><path d="M8 14v3"/><path d="M12 14v3"/><path d="M16 14v3"/></svg>
-                <span style="font-size: 13px; font-weight: 600; color: #475569;">Total Saldo Xendit</span>
+        {{-- Account Balance Allocation Breakdown --}}
+        <div class="p-3 rounded-3" style="background: #f8fafc; border: 1px solid #e2e8f0;">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                <div style="font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">
+                    Rincian Alokasi Saldo Akun Xendit
+                </div>
+                <div class="text-muted" style="font-size: 12px;">
+                    Total Kumulatif: <strong class="text-dark">Rp {{ number_format($xenditBalances['total'], 0, ',', '.') }}</strong>
+                </div>
             </div>
-            <div style="font-size: 18px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
-                Rp {{ number_format($xenditBalances['total'], 0, ',', '.') }}
+
+            <div class="row g-3">
+                {{-- CASH --}}
+                <div class="col-sm-4">
+                    <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe;">
+                        <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:40px;height:40px;background:#2563eb;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6l-10 13l-10 -13z"/><path d="M8 9l4 10l4 -10"/><path d="M3 9h18"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #1e40af;">Cash</div>
+                            <div style="font-size: 18px; font-weight: 800; color: #1e3a8a; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
+                                Rp {{ number_format($xenditBalances['cash'], 0, ',', '.') }}
+                            </div>
+                            <div style="font-size: 11px; color: #3b82f6; font-weight: 600;">Saldo siap tarik</div>
+                        </div>
+                    </div>
+                </div>
+
+                {{-- HOLDING --}}
+                <div class="col-sm-4">
+                    <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border: 1px solid #fde68a;">
+                        <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:40px;height:40px;background:#d97706;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #92400e;">Holding</div>
+                            <div style="font-size: 18px; font-weight: 800; color: #78350f; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
+                                Rp {{ number_format($xenditBalances['holding'], 0, ',', '.') }}
+                            </div>
+                            <div style="font-size: 11px; color: #d97706; font-weight: 600;">Dana ditahan sementara</div>
+                        </div>
+                    </div>
+                </div>
+
+                {{-- TAX --}}
+                <div class="col-sm-4">
+                    <div class="p-3 rounded-3 h-100 d-flex align-items-center gap-3" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 1px solid #a7f3d0;">
+                        <div class="rounded-3 d-flex align-items-center justify-content-center flex-shrink-0" style="width:40px;height:40px;background:#059669;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M9 15l2 2l4 -4"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #065f46;">Tax</div>
+                            <div style="font-size: 18px; font-weight: 800; color: #064e3b; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
+                                Rp {{ number_format($xenditBalances['tax'], 0, ',', '.') }}
+                            </div>
+                            <div style="font-size: 11px; color: #059669; font-weight: 600;">Cadangan pajak</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -467,13 +531,13 @@
                     </div>
                 </div>
 
-                <!-- Xendit Channel Breakdown Donut Chart -->
+                <!-- Xendit Payment Method Breakdown Donut Chart -->
                 <div class="col-lg-4">
                     <div class="card cio-card h-100">
                         <div class="cio-card-header d-flex justify-content-between align-items-center gap-3">
                             <div>
-                                <h3 class="cio-title">Distribusi Channel Xendit</h3>
-                                <div class="cio-subtitle">Proporsi Transaksi per Channel Pembayaran</div>
+                                <h3 class="cio-title">Distribusi Metode Pembayaran</h3>
+                                <div class="cio-subtitle">Proporsi Transaksi per Kategori Pembayaran</div>
                             </div>
                             <span class="cio-icon-avatar info" style="height: 34px; width: 34px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="cio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l19 -9l-9 19l-2 -8l-8 -2z"/></svg>
@@ -485,7 +549,7 @@
                             @else
                                 <div class="cio-empty-state">
                                     <svg xmlns="http://www.w3.org/2000/svg" class="text-muted mb-2" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>
-                                    <div>Belum Ada Transaksi Channel Xendit</div>
+                                    <div>Belum Ada Transaksi Metode Pembayaran</div>
                                 </div>
                             @endif
                         </div>
@@ -809,8 +873,13 @@
                                                         </span>
                                                         @if(!empty($xTrx->channel) && $xTrx->channel !== '-')
                                                             <span class="badge bg-light text-dark border px-2 py-1" style="font-size:11px;">
-                                                                Channel: <strong>{{ $xTrx->channel }}</strong>
+                                                                Metode: <strong>{{ $xTrx->channel }}</strong>
                                                             </span>
+                                                            @if(!empty($xTrx->payment_category))
+                                                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1" style="font-size:11px;">
+                                                                    {{ $xTrx->payment_category }}
+                                                                </span>
+                                                            @endif
                                                         @endif
                                                     </div>
                                                     <div class="d-flex align-items-center gap-2 flex-wrap text-muted small">
@@ -1141,7 +1210,7 @@
                                     show: true,
                                     total: {
                                         show: true,
-                                        label: 'Total Xendit',
+                                        label: 'Total Nominal',
                                         formatter: function (w) {
                                             const sum = w.globals.seriesTotals.reduce((a, b) => a + b, 0);
                                             if (sum >= 1000000) return (sum / 1000000).toFixed(1) + ' Jt';
