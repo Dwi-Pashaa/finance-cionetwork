@@ -46,7 +46,8 @@ class XenditService
         }
 
         try {
-            $response = Http::withBasicAuth($this->secretKey, '')
+            $response = Http::withoutVerifying()
+                ->withBasicAuth($this->secretKey, '')
                 ->timeout(10)
                 ->get("{$this->baseUrl}/balance", [
                     'account_type' => $accountType,
@@ -94,6 +95,7 @@ class XenditService
      *
      * @param  int    $limit   Jumlah transaksi yang diambil (max 100)
      * @param  array  $filters Tambahan filter: types, statuses, created[gte], created[lte], dll.
+     * @param  bool   $useCache
      * @return array
      */
     public function getTransactions(int $limit = 10, array $filters = [], bool $useCache = true): array
@@ -101,6 +103,9 @@ class XenditService
         if (!$this->isConfigured()) {
             return [];
         }
+
+        // Xendit API Transaction View mengharuskan query limit <= 50
+        $limit = min(max($limit, 1), 50);
 
         $cacheKey = 'xendit_transactions_' . md5(json_encode(array_merge($filters, ['limit' => $limit])));
 
@@ -110,7 +115,8 @@ class XenditService
 
         return Cache::remember($cacheKey, now()->addMinutes(3), function () use ($limit, $filters) {
             try {
-                $response = Http::withBasicAuth($this->secretKey, '')
+                $response = Http::withoutVerifying()
+                    ->withBasicAuth($this->secretKey, '')
                     ->timeout(10)
                     ->get("{$this->baseUrl}/transactions", array_merge([
                         'limit' => $limit,
@@ -141,6 +147,7 @@ class XenditService
 
         // Hapus cache transaksi & grafik untuk limit umum
         Cache::forget('xendit_transactions_' . md5(json_encode(['limit' => 10])));
+        Cache::forget('xendit_transactions_' . md5(json_encode(['limit' => 50])));
         Cache::forget('xendit_transactions_' . md5(json_encode(['limit' => 100])));
     }
 
@@ -256,7 +263,7 @@ class XenditService
      */
     public function getXenditChartData(bool $useCache = true): array
     {
-        $transactions = $this->getRecentTransactions(100, $useCache);
+        $transactions = $this->getRecentTransactions(50, $useCache);
         $appTz = config('app.timezone', 'Asia/Jakarta');
         $now = now($appTz);
 
