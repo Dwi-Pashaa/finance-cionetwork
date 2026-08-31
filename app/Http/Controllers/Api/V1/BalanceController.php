@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\ApiClientBalance;
+use App\Models\BalanceChannelSetting;
 use App\Services\Support\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,10 +18,21 @@ class BalanceController extends Controller
         $client = $request->attributes->get('api_client');
         $balance = $client->balance()->first();
 
+        $manualBalance = $balance ? (float) $balance->balance_manual : 0.0;
+        $xenditBalance = $balance ? (float) $balance->balance_xendit : 0.0;
+        $totalBalance  = $balance ? (float) $balance->balance : ($manualBalance + $xenditBalance);
+
         return ApiResponse::success('Balance retrieved successfully', [
             'client_code' => $client->code,
             'client_name' => $client->name,
-            'balance' => $balance ? (string) $balance->balance : '0.00',
+            'balance' => number_format($totalBalance, 2, '.', ''),
+            'balance_manual' => number_format($manualBalance, 2, '.', ''),
+            'balance_xendit' => number_format($xenditBalance, 2, '.', ''),
+            'total_balance' => number_format($totalBalance, 2, '.', ''),
+            'channel_status' => [
+                'manual' => $client->isManualBalanceEnabled(),
+                'xendit' => $client->isXenditBalanceEnabled(),
+            ],
             'retrieved_at' => now()->toIso8601String(),
         ]);
     }
@@ -29,6 +41,7 @@ class BalanceController extends Controller
     {
         $validated = $request->validate([
             'amount' => ['required', 'numeric', 'min:1'],
+            'balance_type' => ['nullable', 'string', 'in:manual,xendit,auto'],
             'reference_id' => ['nullable', 'string', 'max:100'],
             'description' => ['required', 'string', 'max:255'],
             'category' => ['nullable', 'string', 'max:100'],
@@ -37,8 +50,9 @@ class BalanceController extends Controller
 
         $client = $request->attributes->get('api_client');
         $amount = (float) $validated['amount'];
+        $balanceType = strtolower($validated['balance_type'] ?? 'manual');
 
-        $result = DB::transaction(function () use ($client, $amount, $validated) {
+        $result = DB::transaction(function () use ($client, $amount, $balanceType, $validated) {
             $balanceRecord = ApiClientBalance::where('api_client_id', $client->id)
                 ->lockForUpdate()
                 ->first();
@@ -46,21 +60,58 @@ class BalanceController extends Controller
             if (! $balanceRecord) {
                 $balanceRecord = ApiClientBalance::create([
                     'api_client_id' => $client->id,
+                    'balance_manual' => 0,
+                    'balance_xendit' => 0,
                     'balance' => 0,
                 ]);
             }
 
-            $currentBalance = (float) $balanceRecord->balance;
+            $currentManual = (float) $balanceRecord->balance_manual;
+            $currentXendit = (float) $balanceRecord->balance_xendit;
+            $currentTotal  = (float) $balanceRecord->balance;
 
-            if ($currentBalance < $amount) {
-                return [
-                    'success' => false,
-                    'current_balance' => $currentBalance,
-                ];
+            // Pemotongan berdasarkan tipe saldo yang diminta
+            if ($balanceType === 'xendit') {
+                if ($currentXendit < $amount) {
+                    return [
+                        'success' => false,
+                        'message' => 'Saldo Xendit tidak mencukupi. Sisa saldo Xendit: Rp ' . number_format($currentXendit, 0, ',', '.'),
+                        'error_code' => 'INSUFFICIENT_XENDIT_BALANCE',
+                        'current_balance' => $currentXendit,
+                    ];
+                }
+                $balanceRecord->balance_xendit = $currentXendit - $amount;
+            } elseif ($balanceType === 'auto') {
+                // Auto: potong dari Xendit dahulu, sisanya dari Manual
+                if ($currentTotal < $amount) {
+                    return [
+                        'success' => false,
+                        'message' => 'Total saldo tidak mencukupi. Sisa total saldo: Rp ' . number_format($currentTotal, 0, ',', '.'),
+                        'error_code' => 'INSUFFICIENT_TOTAL_BALANCE',
+                        'current_balance' => $currentTotal,
+                    ];
+                }
+                if ($currentXendit >= $amount) {
+                    $balanceRecord->balance_xendit = $currentXendit - $amount;
+                } else {
+                    $remainder = $amount - $currentXendit;
+                    $balanceRecord->balance_xendit = 0;
+                    $balanceRecord->balance_manual = $currentManual - $remainder;
+                }
+            } else {
+                // Default: Saldo Manual
+                if ($currentManual < $amount) {
+                    return [
+                        'success' => false,
+                        'message' => 'Saldo Manual tidak mencukupi. Sisa saldo Manual: Rp ' . number_format($currentManual, 0, ',', '.'),
+                        'error_code' => 'INSUFFICIENT_MANUAL_BALANCE',
+                        'current_balance' => $currentManual,
+                    ];
+                }
+                $balanceRecord->balance_manual = $currentManual - $amount;
             }
 
-            $newBalance = $currentBalance - $amount;
-            $balanceRecord->balance = $newBalance;
+            $balanceRecord->recalculateTotal();
             $balanceRecord->save();
 
             activity('external_finance')
@@ -73,8 +124,13 @@ class BalanceController extends Controller
                     'subject_type' => 'Expense',
                     'subject_external_id' => $validated['reference_id'] ?? null,
                     'amount' => $amount,
-                    'previous_balance' => $currentBalance,
-                    'current_balance' => $newBalance,
+                    'balance_type' => $balanceType,
+                    'previous_manual' => $currentManual,
+                    'previous_xendit' => $currentXendit,
+                    'previous_balance' => $currentTotal,
+                    'current_manual' => (float) $balanceRecord->balance_manual,
+                    'current_xendit' => (float) $balanceRecord->balance_xendit,
+                    'current_balance' => (float) $balanceRecord->balance,
                     'reference_id' => $validated['reference_id'] ?? null,
                     'category' => $validated['category'] ?? null,
                     'note' => $validated['note'] ?? null,
@@ -84,15 +140,17 @@ class BalanceController extends Controller
 
             return [
                 'success' => true,
-                'current_balance' => $newBalance,
+                'balance_type' => $balanceType,
+                'balance_manual' => (float) $balanceRecord->balance_manual,
+                'balance_xendit' => (float) $balanceRecord->balance_xendit,
+                'current_balance' => (float) $balanceRecord->balance,
             ];
         });
 
         if (! $result['success']) {
-            $formattedBalance = number_format($result['current_balance'], 0, ',', '.');
             return ApiResponse::error(
-                "Saldo tidak mencukupi. Sisa saldo: Rp {$formattedBalance}",
-                'INSUFFICIENT_BALANCE',
+                $result['message'],
+                $result['error_code'],
                 400,
                 [
                     'current_balance' => $result['current_balance'],
@@ -103,8 +161,11 @@ class BalanceController extends Controller
 
         return ApiResponse::success('Saldo berhasil dipotong', [
             'client_code' => $client->code,
+            'balance_type' => $result['balance_type'],
             'amount_deducted' => $amount,
-            'current_balance' => $result['current_balance'],
+            'balance_manual' => number_format($result['balance_manual'], 2, '.', ''),
+            'balance_xendit' => number_format($result['balance_xendit'], 2, '.', ''),
+            'current_balance' => number_format($result['current_balance'], 2, '.', ''),
             'reference_id' => $validated['reference_id'] ?? null,
             'transaction_at' => now()->toIso8601String(),
         ], 200);
@@ -114,6 +175,7 @@ class BalanceController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'amount' => ['required', 'numeric', 'gt:0'],
+            'balance_type' => ['nullable', 'string', 'in:manual,xendit'],
             'reference_id' => ['required', 'string', 'max:100'],
             'description' => ['required', 'string', 'max:255'],
             'reason' => ['nullable', 'string', 'max:255'],
@@ -137,6 +199,7 @@ class BalanceController extends Controller
         }
 
         $validated = $validator->validated();
+        $balanceType = strtolower($validated['balance_type'] ?? 'manual');
 
         // Cek duplikasi reference_id di riwayat transaksi / activity_log
         $isDuplicate = Activity::where('log_name', 'external_finance')
@@ -162,7 +225,7 @@ class BalanceController extends Controller
         $client = $request->attributes->get('api_client');
         $amount = (float) $validated['amount'];
 
-        $result = DB::transaction(function () use ($client, $amount, $validated) {
+        $result = DB::transaction(function () use ($client, $amount, $balanceType, $validated) {
             $balanceRecord = ApiClientBalance::where('api_client_id', $client->id)
                 ->lockForUpdate()
                 ->first();
@@ -170,14 +233,23 @@ class BalanceController extends Controller
             if (! $balanceRecord) {
                 $balanceRecord = ApiClientBalance::create([
                     'api_client_id' => $client->id,
+                    'balance_manual' => 0,
+                    'balance_xendit' => 0,
                     'balance' => 0,
                 ]);
             }
 
-            $currentBalance = (float) $balanceRecord->balance;
-            $newBalance = $currentBalance + $amount;
+            $currentManual = (float) $balanceRecord->balance_manual;
+            $currentXendit = (float) $balanceRecord->balance_xendit;
+            $currentTotal  = (float) $balanceRecord->balance;
 
-            $balanceRecord->balance = $newBalance;
+            if ($balanceType === 'xendit') {
+                $balanceRecord->balance_xendit = $currentXendit + $amount;
+            } else {
+                $balanceRecord->balance_manual = $currentManual + $amount;
+            }
+
+            $balanceRecord->recalculateTotal();
             $balanceRecord->save();
 
             activity('external_finance')
@@ -190,8 +262,13 @@ class BalanceController extends Controller
                     'subject_type' => 'Income',
                     'subject_external_id' => $validated['reference_id'],
                     'amount' => $amount,
-                    'previous_balance' => $currentBalance,
-                    'current_balance' => $newBalance,
+                    'balance_type' => $balanceType,
+                    'previous_manual' => $currentManual,
+                    'previous_xendit' => $currentXendit,
+                    'previous_balance' => $currentTotal,
+                    'current_manual' => (float) $balanceRecord->balance_manual,
+                    'current_xendit' => (float) $balanceRecord->balance_xendit,
+                    'current_balance' => (float) $balanceRecord->balance,
                     'reference_id' => $validated['reference_id'],
                     'reason' => $validated['reason'] ?? null,
                     'request_id' => request()->attributes->get('request_id'),
@@ -199,7 +276,10 @@ class BalanceController extends Controller
                 ->log($validated['description']);
 
             return [
-                'current_balance' => $newBalance,
+                'balance_type' => $balanceType,
+                'balance_manual' => (float) $balanceRecord->balance_manual,
+                'balance_xendit' => (float) $balanceRecord->balance_xendit,
+                'current_balance' => (float) $balanceRecord->balance,
             ];
         });
 
@@ -209,13 +289,14 @@ class BalanceController extends Controller
             'message' => 'Saldo berhasil dikembalikan',
             'data' => [
                 'reference_id' => $validated['reference_id'],
+                'balance_type' => $result['balance_type'],
                 'amount' => $amount,
-                'balance_after' => $result['current_balance'],
+                'balance_manual' => number_format($result['balance_manual'], 2, '.', ''),
+                'balance_xendit' => number_format($result['balance_xendit'], 2, '.', ''),
+                'balance_after' => number_format($result['current_balance'], 2, '.', ''),
                 'refunded_at' => now()->toIso8601String(),
             ],
             'request_id' => $request->attributes->get('request_id'),
         ], 200);
     }
 }
-
-

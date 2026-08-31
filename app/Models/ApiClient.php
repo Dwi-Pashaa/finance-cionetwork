@@ -15,6 +15,8 @@ class ApiClient extends Model
         'code',
         'client_id',
         'status',
+        'is_manual_balance_enabled',
+        'is_xendit_balance_enabled',
         'description',
         'rate_limit_per_minute',
         'revoked_at',
@@ -22,6 +24,8 @@ class ApiClient extends Model
 
     protected $casts = [
         'status' => ApiClientStatus::class,
+        'is_manual_balance_enabled' => 'boolean',
+        'is_xendit_balance_enabled' => 'boolean',
         'last_used_at' => 'datetime',
         'revoked_at' => 'datetime',
     ];
@@ -44,5 +48,15 @@ class ApiClient extends Model
     public function isActive(): bool
     {
         return $this->status === ApiClientStatus::Active;
+    }
+
+    public function isManualBalanceEnabled(): bool
+    {
+        return (bool) ($this->is_manual_balance_enabled ?? true);
+    }
+
+    public function isXenditBalanceEnabled(): bool
+    {
+        return (bool) ($this->is_xendit_balance_enabled ?? true);
     }
 }

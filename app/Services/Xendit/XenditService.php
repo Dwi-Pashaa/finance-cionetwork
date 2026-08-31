@@ -546,7 +546,46 @@ class XenditService
             'total_outflow'     => $transactions->where('is_income', false)->sum('amount'),
         ];
     }
+
+    /**
+     * Buat invoice pembayaran Xendit untuk penambahan saldo client.
+     */
+    public function createInvoice(string $externalId, float $amount, string $description, ?string $payerEmail = null, ?string $successRedirectUrl = null): array
+    {
+        if (!$this->isConfigured()) {
+            throw new \RuntimeException('Xendit Secret Key belum dikonfigurasi di server.');
+        }
+
+        $payload = [
+            'external_id' => $externalId,
+            'amount' => $amount,
+            'description' => $description,
+            'invoice_duration' => 86400, // 24 jam
+            'currency' => 'IDR',
+        ];
+
+        if ($payerEmail) {
+            $payload['payer_email'] = $payerEmail;
+        }
+
+        if ($successRedirectUrl) {
+            $payload['success_redirect_url'] = $successRedirectUrl;
+        }
+
+        $response = Http::withoutVerifying()
+            ->withBasicAuth($this->secretKey, '')
+            ->timeout(15)
+            ->post("{$this->baseUrl}/v2/invoices", $payload);
+
+        if (!$response->successful()) {
+            Log::error('[Xendit] Gagal membuat invoice: ' . $response->status() . ' | ' . $response->body());
+            throw new \RuntimeException('Gagal membuat invoice Xendit: ' . ($response->json('message') ?? $response->body()));
+        }
+
+        return $response->json();
+    }
 }
+
 
 
 

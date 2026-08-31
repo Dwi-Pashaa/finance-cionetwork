@@ -10,6 +10,11 @@ class BalanceAdjustment extends Model
     protected $fillable = [
         'api_client_id',
         'type',
+        'balance_type',
+        'source',
+        'reference_id',
+        'xendit_invoice_id',
+        'payment_status',
         'amount',
         'balance_before',
         'balance_after',

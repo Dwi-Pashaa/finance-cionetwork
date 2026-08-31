@@ -104,6 +104,8 @@ Route::middleware(['auth'])->group(function () {
     // pengaturan saldo website
     Route::prefix('saldo-website')->group(function () {
         Route::get('/', [ApiBalanceController::class, 'index'])->name('saldo-website.index')->can('lihat saldo');
+        Route::post('/{id}/toggle-channel', [ApiBalanceController::class, 'toggleClientChannel'])->name('saldo-website.toggle-channel')->can('edit saldo');
         Route::post('/{id}/adjust', [ApiBalanceController::class, 'adjust'])->name('saldo-website.adjust')->can('buat saldo');
+        Route::post('/{id}/xendit-topup', [ApiBalanceController::class, 'createXenditTopup'])->name('saldo-website.xendit-topup')->can('buat saldo');
     });
 });

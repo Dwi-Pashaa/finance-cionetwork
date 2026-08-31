@@ -38,8 +38,16 @@
                         <div class="datagrid-content"><code>{{ $client->client_id }}</code></div>
                     </div>
                     <div class="datagrid-item">
-                        <div class="datagrid-title">Saldo</div>
-                        <div class="datagrid-content fw-bold">Rp {{ number_format($client->balance?->balance ?? 0, 0, ',', '.') }}</div>
+                        <div class="datagrid-title">Saldo Manual</div>
+                        <div class="datagrid-content fw-bold text-success">Rp {{ number_format($client->balance?->balance_manual ?? 0, 0, ',', '.') }}</div>
+                    </div>
+                    <div class="datagrid-item">
+                        <div class="datagrid-title">Saldo Xendit</div>
+                        <div class="datagrid-content fw-bold text-primary">Rp {{ number_format($client->balance?->balance_xendit ?? 0, 0, ',', '.') }}</div>
+                    </div>
+                    <div class="datagrid-item">
+                        <div class="datagrid-title">Total Saldo</div>
+                        <div class="datagrid-content fw-bold fs-3 text-dark">Rp {{ number_format($client->balance?->balance ?? 0, 0, ',', '.') }}</div>
                     </div>
                     <div class="datagrid-item">
                         <div class="datagrid-title">Rate Limit</div>
