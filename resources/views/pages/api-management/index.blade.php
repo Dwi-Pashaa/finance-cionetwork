@@ -45,7 +45,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table card-table table-vcenter">
+        <table class="table card-table table-vcenter table-hover">
             <thead>
                 <tr>
                     <th class="text-center" style="width: 50px;">No</th>
@@ -66,9 +66,13 @@
                         </td>
                         <td>
                             <div class="fw-bold text-dark">{{ $item->name }}</div>
-                            <div class="small text-muted">{{ $item->code }}</div>
+                            <div class="small text-muted font-monospace">{{ $item->code }}</div>
                         </td>
-                        <td><code>{{ $item->client_id }}</code></td>
+                        <td>
+                            <div class="d-flex align-items-center gap-1.5">
+                                <code class="text-primary bg-primary-subtle px-2 py-0.5 rounded font-monospace" style="font-size: 12px;">{{ $item->client_id }}</code>
+                            </div>
+                        </td>
                         <td>
                             @if ($item->status->value === 'active')
                                 <span class="badge bg-success-lt px-2.5 py-1">Active</span>
@@ -78,7 +82,7 @@
                                 <span class="badge bg-danger-lt px-2.5 py-1">Revoked</span>
                             @endif
                         </td>
-                        <td class="fw-semibold">Rp {{ number_format($item->balance?->balance ?? 0, 0, ',', '.') }}</td>
+                        <td class="fw-bold font-monospace text-dark">Rp {{ number_format($item->balance?->balance ?? 0, 0, ',', '.') }}</td>
                         <td class="text-muted small">
                             {{ $item->last_used_at ? \Carbon\Carbon::parse($item->last_used_at)->format('d M Y, H:i') : '-' }}
                         </td>
@@ -91,7 +95,19 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="8" class="text-center py-5 text-muted">Belum Ada API Client Terdaftar</td>
+                        <td colspan="8">
+                            <div class="empty-state-container">
+                                <div class="empty-state-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9 -9 9s-9 -1.8 -9 -9s1.8 -9 9 -9z" /><path d="M8 11h.01" /><path d="M16 11h.01" /><path d="M9.5 15a3.5 3.5 0 0 0 5 0" /></svg>
+                                </div>
+                                <h4 class="empty-state-title">Belum Ada Client Terdaftar</h4>
+                                <p class="empty-state-text">Daftarkan client website pertama Anda untuk menghubungkannya ke sistem API Finance CIO.</p>
+                                <a href="{{ route('api-management.create') }}" class="btn btn-primary btn-sm mt-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>
+                                    Register Client Baru
+                                </a>
+                            </div>
+                        </td>
                     </tr>
                 @endforelse
             </tbody>

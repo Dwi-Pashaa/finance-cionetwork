@@ -579,7 +579,7 @@
                     </a>
                 @endcan
             </div>
-            <div class="card-body">
+            <div class="card-body p-3">
                 <div class="cio-recent-list">
                     @forelse (($summary['latest_incomes'] ?? []) as $income)
                         <div class="cio-recent-item">
@@ -587,16 +587,22 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" class="cio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
                             </span>
                             <div class="flex-fill">
-                                <div class="cio-recent-title">{{ $income->category?->name ?? 'Tanpa Kategori' }}</div>
+                                <div class="cio-recent-title fw-semibold text-dark">{{ $income->category?->name ?? 'Tanpa Kategori' }}</div>
                                 <div class="text-muted small">
-                                    <span class="badge bg-light text-dark border me-1">{{ $income->source ?? 'Internal' }}</span>
+                                    <span class="badge bg-light text-secondary border me-1">{{ $income->source ?? 'Internal' }}</span>
                                     {{ $income->transaction_date->format('d M Y') }}
                                 </div>
                             </div>
-                            <div class="cio-currency text-success text-end">+ Rp {{ number_format($income->amount, 0, ',', '.') }}</div>
+                            <div class="cio-currency text-success text-end fw-bold font-monospace">+ Rp {{ number_format($income->amount, 0, ',', '.') }}</div>
                         </div>
                     @empty
-                        <div class="cio-empty-state">Belum Ada Data Pemasukan</div>
+                        <div class="empty-state-container py-4">
+                            <div class="empty-state-icon" style="width: 40px; height: 40px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                            </div>
+                            <h5 class="empty-state-title" style="font-size: 13px;">Belum Ada Pemasukan</h5>
+                            <p class="empty-state-text small">Transaksi pemasukan terbaru akan muncul di sini.</p>
+                        </div>
                     @endforelse
                 </div>
             </div>
@@ -620,7 +626,7 @@
                     </a>
                 @endcan
             </div>
-            <div class="card-body">
+            <div class="card-body p-3">
                 <div class="cio-recent-list">
                     @forelse (($summary['latest_expenses'] ?? []) as $expense)
                         <div class="cio-recent-item">
@@ -628,16 +634,22 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" class="cio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
                             </span>
                             <div class="flex-fill">
-                                <div class="cio-recent-title">{{ $expense->category?->name ?? 'Tanpa Kategori' }}</div>
+                                <div class="cio-recent-title fw-semibold text-dark">{{ $expense->category?->name ?? 'Tanpa Kategori' }}</div>
                                 <div class="text-muted small">
-                                    <span class="badge bg-light text-dark border me-1">{{ $expense->payee ?? 'Penerima -' }}</span>
+                                    <span class="badge bg-light text-secondary border me-1">{{ $expense->payee ?? 'Penerima -' }}</span>
                                     {{ $expense->transaction_date->format('d M Y') }}
                                 </div>
                             </div>
-                            <div class="cio-currency text-danger text-end">- Rp {{ number_format($expense->total_amount, 0, ',', '.') }}</div>
+                            <div class="cio-currency text-danger text-end fw-bold font-monospace">- Rp {{ number_format($expense->total_amount, 0, ',', '.') }}</div>
                         </div>
                     @empty
-                        <div class="cio-empty-state">Belum Ada Data Pengeluaran</div>
+                        <div class="empty-state-container py-4">
+                            <div class="empty-state-icon" style="width: 40px; height: 40px; background: #fef2f2; color: #ef4444;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12h14"/></svg>
+                            </div>
+                            <h5 class="empty-state-title" style="font-size: 13px;">Belum Ada Pengeluaran</h5>
+                            <p class="empty-state-text small">Transaksi pengeluaran terbaru akan muncul di sini.</p>
+                        </div>
                     @endforelse
                 </div>
             </div>

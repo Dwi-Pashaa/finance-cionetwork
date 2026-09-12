@@ -10,6 +10,7 @@ use App\Services\Api\BalanceService;
 use App\Services\Xendit\XenditService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
+use Spatie\Activitylog\Models\Activity;
 
 class ApiBalanceController extends Controller
 {
@@ -91,10 +92,12 @@ class ApiBalanceController extends Controller
 
         $request->validate([
             'type' => 'required|in:adjust_in,adjust_out',
-            'balance_type' => 'required|in:manual,xendit',
+            'balance_type' => 'nullable|in:manual,xendit',
             'amount' => 'required|numeric|min:0.01',
             'reason' => 'required|string|max:255',
         ]);
+
+        $balanceType = $request->input('balance_type', 'manual') ?: 'manual';
 
         try {
             $this->balanceService->adjust(
@@ -103,14 +106,14 @@ class ApiBalanceController extends Controller
                 (float) $request->amount,
                 $request->reason,
                 auth()->id(),
-                $request->balance_type,
+                $balanceType,
                 'admin_adjustment'
             );
         } catch (InvalidArgumentException $e) {
             return back()->withErrors(['amount' => $e->getMessage()])->withInput();
         }
 
-        $pocketLabel = $request->balance_type === 'xendit' ? 'Saldo Xendit' : 'Saldo Manual';
+        $pocketLabel = $balanceType === 'xendit' ? 'Saldo Xendit' : 'Saldo Manual';
 
         return redirect()
             ->route('saldo-website.index')
@@ -172,5 +175,84 @@ class ApiBalanceController extends Controller
         } catch (\Throwable $e) {
             return back()->withErrors(['amount' => 'Gagal membuat Invoice Xendit: ' . $e->getMessage()])->withInput();
         }
+    }
+
+    public function clientLogs(Request $request, $id)
+    {
+        $client = ApiClient::with('balance')->findOrFail($id);
+
+        $eventFilter = $request->event ?? null;
+        $limit = min((int) ($request->limit ?? 50), 100);
+
+        $activities = Activity::query()
+            ->where(function ($query) use ($client) {
+                $query->where('properties->api_client_id', $client->id)
+                    ->orWhere('properties->client_id', $client->client_id)
+                    ->orWhere('properties->client_code', $client->code)
+                    ->orWhere(function ($q) use ($client) {
+                        $q->where('subject_type', ApiClient::class)
+                          ->where('subject_id', $client->id);
+                    });
+            })
+            ->when($eventFilter, function ($query, $ev) {
+                $query->where('event', $ev);
+            })
+            ->with(['causer'])
+            ->latest('id')
+            ->limit($limit)
+            ->get();
+
+        $manualBal = (float) ($client->balance?->balance_manual ?? 0);
+        $xenditBal = (float) ($client->balance?->balance_xendit ?? 0);
+        $totalBal  = (float) ($client->balance?->balance ?? ($manualBal + $xenditBal));
+
+        $data = $activities->map(function ($act) {
+            $props = $act->properties ? $act->properties->toArray() : [];
+            $amount = isset($props['amount']) ? (float) $props['amount'] : null;
+            $currentBal = isset($props['current_balance']) ? (float) $props['current_balance'] : (isset($props['balance_after']) ? (float) $props['balance_after'] : null);
+            $prevBal = isset($props['previous_balance']) ? (float) $props['previous_balance'] : (isset($props['balance_before']) ? (float) $props['balance_before'] : null);
+
+            return [
+                'id' => $act->id,
+                'created_at' => $act->created_at ? $act->created_at->format('d M Y, H:i') : '-',
+                'created_at_time' => $act->created_at ? $act->created_at->format('H:i:s') : '-',
+                'created_at_human' => $act->created_at ? $act->created_at->diffForHumans() : '-',
+                'log_name' => $act->log_name,
+                'event' => $act->event ?? 'activity',
+                'description' => $act->description,
+                'causer_name' => $act->causer?->name ?? 'API Client',
+                'reference_id' => $props['reference_id'] ?? $props['subject_external_id'] ?? null,
+                'request_id' => $props['request_id'] ?? null,
+                'category' => $props['category'] ?? null,
+                'note' => $props['note'] ?? null,
+                'amount' => $amount,
+                'amount_formatted' => $amount !== null ? 'Rp ' . number_format($amount, 0, ',', '.') : null,
+                'balance_type' => $props['balance_type'] ?? null,
+                'balance_before_formatted' => $prevBal !== null ? 'Rp ' . number_format($prevBal, 0, ',', '.') : null,
+                'balance_after_formatted' => $currentBal !== null ? 'Rp ' . number_format($currentBal, 0, ',', '.') : null,
+                'properties' => $props,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'client' => [
+                'id' => $client->id,
+                'name' => $client->name,
+                'code' => $client->code,
+                'client_id' => $client->client_id,
+                'status' => $client->status->value ?? 'active',
+                'rate_limit' => $client->rate_limit_per_minute,
+                'last_used_at' => $client->last_used_at ? $client->last_used_at->format('d M Y, H:i') : '-',
+                'last_ip' => $client->last_ip ?? '-',
+                'manual_balance' => $manualBal,
+                'manual_balance_formatted' => 'Rp ' . number_format($manualBal, 0, ',', '.'),
+                'xendit_balance' => $xenditBal,
+                'xendit_balance_formatted' => 'Rp ' . number_format($xenditBal, 0, ',', '.'),
+                'total_balance' => $totalBal,
+                'total_balance_formatted' => 'Rp ' . number_format($totalBal, 0, ',', '.'),
+            ],
+            'activities' => $data,
+        ]);
     }
 }

@@ -135,4 +135,48 @@ class BalanceAdjustmentTest extends TestCase
 
         $this->assertSame(0, BalanceAdjustment::count());
     }
+
+    public function test_client_logs_can_be_retrieved_by_user_with_permission(): void
+    {
+        $client = $this->client('LOG1');
+
+        activity('external_finance')
+            ->event('deduct_balance')
+            ->withProperties([
+                'api_client_id' => $client->id,
+                'client_id' => $client->client_id,
+                'client_code' => $client->code,
+                'amount' => 50000,
+                'reference_id' => 'REF-TEST-123',
+            ])
+            ->log('Pembayaran kasbon via API');
+
+        $response = $this->actingAs($this->admin)
+            ->getJson(route('saldo-website.client-logs', $client->id));
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'client' => [
+                    'id' => $client->id,
+                    'name' => $client->name,
+                    'code' => $client->code,
+                ],
+            ])
+            ->assertJsonCount(1, 'activities')
+            ->assertJsonPath('activities.0.event', 'deduct_balance')
+            ->assertJsonPath('activities.0.amount', 50000)
+            ->assertJsonPath('activities.0.reference_id', 'REF-TEST-123')
+            ->assertJsonPath('activities.0.description', 'Pembayaran kasbon via API');
+    }
+
+    public function test_client_logs_requires_lihat_saldo_permission(): void
+    {
+        $client = $this->client('LOG2');
+        $user = User::factory()->create(); // tanpa permission
+
+        $this->actingAs($user)
+            ->getJson(route('saldo-website.client-logs', $client->id))
+            ->assertForbidden();
+    }
 }

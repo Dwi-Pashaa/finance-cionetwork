@@ -55,7 +55,7 @@ class BalanceEndpointTest extends TestCase
             ->assertJsonPath('message', 'Saldo berhasil dipotong')
             ->assertJsonPath('data.client_code', 'WEB_PAY')
             ->assertJsonPath('data.amount_deducted', 50000)
-            ->assertJsonPath('data.current_balance', 950000)
+            ->assertJsonPath('data.current_balance', '950000.00')
             ->assertJsonPath('data.reference_id', 'KB-12');
 
         $this->assertDatabaseHas('api_client_balances', [
@@ -93,7 +93,7 @@ class BalanceEndpointTest extends TestCase
             ->assertJsonPath('message', 'Saldo berhasil dikembalikan')
             ->assertJsonPath('data.reference_id', 'REFUND-GAJI-5-9-1787929941')
             ->assertJsonPath('data.amount', 500000)
-            ->assertJsonPath('data.balance_after', 1500000);
+            ->assertJsonPath('data.balance_after', '1500000.00');
 
         $this->assertDatabaseHas('api_client_balances', [
             'api_client_id' => $client->id,
@@ -165,7 +165,10 @@ class BalanceEndpointTest extends TestCase
         ]);
 
         ApiClientBalance::where('api_client_id', $result['client']->id)
-            ->update(['balance' => $balance]);
+            ->update([
+                'balance' => $balance,
+                'balance_manual' => $balance,
+            ]);
 
         return [$result['client'], $result['secret']];
     }

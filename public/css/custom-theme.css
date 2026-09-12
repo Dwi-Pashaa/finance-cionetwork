@@ -1133,4 +1133,167 @@ footer.footer {
   .auth-card {
     padding: 1.5rem !important;
   }
+
+  /* Mobile Stack for Toolbar & Pagination */
+  .filter-toolbar {
+    padding: 0.75rem 1rem !important;
+  }
+
+  .table-footer {
+    padding: 0.75rem 1rem !important;
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+    text-align: center !important;
+  }
+
+  .table-footer .pagination {
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 2px !important;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .cio-hero-banner {
+    padding: 1rem !important;
+  }
+
+  .cio-hero-banner .d-flex.align-items-center.gap-2 {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.5rem !important;
+  }
+
+  .cio-hero-btn,
+  .cio-hero-btn-outline {
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 8px 12px !important;
+    font-size: 0.8125rem !important;
+  }
+
+  .cio-metric-value {
+    font-size: 1.15rem !important;
+  }
+
+  .cio-icon-avatar {
+    width: 38px !important;
+    height: 38px !important;
+    font-size: 16px !important;
+  }
+
+  .card-header .btn {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+}
+
+/* ==========================================================================
+   UI Polish: Action Buttons, Switch Toggles & Empty States
+   ========================================================================== */
+.btn-action {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: #ffffff;
+  color: var(--text-secondary);
+  transition: all 0.15s ease-in-out;
+  text-decoration: none !important;
+}
+
+.btn-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+.btn-action:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-action-primary:hover {
+  background: var(--primary-base);
+  color: #ffffff;
+  border-color: var(--primary-base);
+}
+
+.btn-action-warning:hover {
+  background: #f59e0b;
+  color: #ffffff;
+  border-color: #f59e0b;
+}
+
+.btn-action-danger:hover {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+.btn-action-success:hover {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
+}
+
+/* Form Switch Toggle Polish */
+.form-check.form-switch .form-check-input {
+  width: 2.25em !important;
+  height: 1.25em !important;
+  cursor: pointer;
+  background-color: #cbd5e1;
+  border-color: #94a3b8;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23fff'/%3e%3c/svg%3e");
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-position 0.2s ease-in-out;
+}
+
+.form-check.form-switch .form-check-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.form-check.form-switch .form-check-input:checked {
+  background-color: var(--primary-base);
+  border-color: var(--primary-base);
+}
+
+/* Empty State Styling */
+.empty-state-container {
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.empty-state-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background: var(--primary-subtle);
+  color: var(--primary-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.empty-state-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.35rem;
+}
+
+.empty-state-text {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  max-width: 380px;
+  margin: 0 auto;
 }
