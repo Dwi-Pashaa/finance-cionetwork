@@ -107,22 +107,23 @@ class AnalyticsService
     /**
      * Dataset Time-Series Grafik Multi-Web + Xendit
      */
-    public function getChart(string $range = '7d', string $interval = 'daily', ?string $clientCode = null, bool $useCache = true): array
+    public function getChart(string $range = '7d', string $interval = 'daily', ?string $clientCode = null, bool $useCache = true, ?string $date = null): array
     {
         $clientKey = $clientCode ? strtoupper($clientCode) : 'ALL';
-        $cacheKey = "cio_analytics_chart_{$range}_{$interval}_{$clientKey}_" . now('Asia/Jakarta')->format('YmdH_i');
+        $dateKey = $date ? str_replace('-', '', $date) : 'TODAY';
+        $cacheKey = "cio_analytics_chart_{$range}_{$interval}_{$clientKey}_{$dateKey}_" . now('Asia/Jakarta')->format('YmdH_i');
 
         if ($useCache) {
-            return Cache::remember($cacheKey, 60, fn () => $this->computeChart($range, $interval, $clientCode));
+            return Cache::remember($cacheKey, 60, fn () => $this->computeChart($range, $interval, $clientCode, $date));
         }
 
-        return $this->computeChart($range, $interval, $clientCode);
+        return $this->computeChart($range, $interval, $clientCode, $date);
     }
 
-    private function computeChart(string $range = '7d', string $interval = 'daily', ?string $clientCode = null): array
+    private function computeChart(string $range = '7d', string $interval = 'daily', ?string $clientCode = null, ?string $date = null): array
     {
         $appTz = config('app.timezone', 'Asia/Jakarta');
-        $now = now($appTz);
+        $now = $date ? Carbon::parse($date, $appTz) : now($appTz);
         $clientCode = ($clientCode && strtoupper($clientCode) !== 'ALL') ? $clientCode : null;
 
         $buckets = $this->generateTimeBuckets($range, $interval, $now);
@@ -150,6 +151,42 @@ class AnalyticsService
         $netProfit = $totalInflow - $totalOutflow;
         $profitMarginPct = ($totalInflow > 0) ? round(($netProfit / $totalInflow) * 100, 2) : 0.0;
 
+        // Calculate web breakdown from external activities in this period
+        $webBreakdown = [];
+        $webClients = [
+            'WEB_SLIP_GAJI'   => 'Web Slip Gaji',
+            'CIO_FINANCE'     => 'CIO Finance',
+            'CIO_OPERASIONAL' => 'CIO Operasional',
+            'CIO_INVESTOR'    => 'CIO Investor Portal',
+        ];
+
+        try {
+            $allClients = ApiClient::where('status', 'active')->pluck('name', 'code')->toArray();
+            $webClients = array_merge($webClients, $allClients);
+        } catch (\Throwable $e) {}
+
+        $firstBucketStart = !empty($buckets) ? $buckets[0]['start'] : $now->copy()->subDays(7);
+        $lastBucketEnd = !empty($buckets) ? end($buckets)['end'] : $now;
+
+        foreach ($webClients as $code => $name) {
+            $clientFin = $this->calculatePeriodFinancials($firstBucketStart, $lastBucketEnd, $code);
+            $actCount = Activity::query()
+                ->where('log_name', 'external_finance')
+                ->where('properties->client_code', $code)
+                ->whereBetween('created_at', [$firstBucketStart, $lastBucketEnd])
+                ->count();
+
+            if ($clientFin['revenue'] > 0 || $clientFin['expenses'] > 0 || $actCount > 0) {
+                $webBreakdown[] = [
+                    'code'      => $code,
+                    'name'      => $name,
+                    'inflow'    => $clientFin['revenue'],
+                    'outflow'   => $clientFin['expenses'],
+                    'log_count' => $actCount,
+                ];
+            }
+        }
+
         return [
             'categories' => $categories,
             'series' => [
@@ -172,6 +209,7 @@ class AnalyticsService
                 'net_profit' => round($netProfit, 2),
                 'profit_margin_pct' => round($profitMarginPct, 2),
             ],
+            'web_breakdown' => $webBreakdown,
         ];
     }
 
@@ -321,6 +359,9 @@ class AnalyticsService
         $inflowEvents = ['xendit_topup', 'refund_balance', 'invoice.paid', 'xendit_payment', 'payment.succeeded', 'topup.succeeded'];
         $outflowEvents = ['deduct_balance', 'expense.created', 'xendit_disbursement', 'disbursement.succeeded', 'payout.succeeded'];
 
+        // Determine if period is sub-daily (e.g. hourly or specific time range within a day)
+        $isSubDaily = ($start->toDateString() === $end->toDateString()) && ($start->format('H:i:s') !== '00:00:00' || $end->format('H:i:s') !== '23:59:59');
+
         if ($clientCode) {
             // Filter aktivitas client tertentu
             $activities = Activity::query()
@@ -342,11 +383,20 @@ class AnalyticsService
             }
         } else {
             // 1. Pemasukan Kas Internal
-            $revenue += (float) Income::whereBetween('transaction_date', [$startDateStr, $endDateStr])->sum('amount');
+            if ($isSubDaily) {
+                $revenue += (float) Income::whereBetween('created_at', [$start, $end])->sum('amount');
+            } else {
+                $revenue += (float) Income::whereBetween('transaction_date', [$startDateStr, $endDateStr])->sum('amount');
+            }
 
             // 2. Pengeluaran Kas Internal (beserta admin fee)
-            $expenses += (float) Expense::whereBetween('transaction_date', [$startDateStr, $endDateStr])
-                ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
+            if ($isSubDaily) {
+                $expenses += (float) Expense::whereBetween('created_at', [$start, $end])
+                    ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
+            } else {
+                $expenses += (float) Expense::whereBetween('transaction_date', [$startDateStr, $endDateStr])
+                    ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
+            }
 
             // 3. Log External Activity dari Semua Web & Xendit
             $activities = Activity::query()
@@ -423,19 +473,61 @@ class AnalyticsService
         $buckets = [];
 
         switch (strtolower($range)) {
-            case '7d':
-                for ($i = 6; $i >= 0; $i--) {
-                    $d = $now->copy()->subDays($i);
+            case '1d':
+            case '24h':
+            case 'today':
+            case '1h':
+            case '1hr':
+                // 24 jam dalam sehari (00:00 - 23:00)
+                $todayStart = $now->copy()->startOfDay();
+                for ($h = 0; $h < 24; $h++) {
+                    $hStart = $todayStart->copy()->addHours($h);
+                    $hEnd = $hStart->copy()->endOfHour();
                     $buckets[] = [
-                        'label' => $d->translatedFormat('d M'),
-                        'start' => $d->copy()->startOfDay(),
-                        'end'   => $d->copy()->endOfDay(),
+                        'label' => sprintf('%02d:00', $h),
+                        'start' => $hStart,
+                        'end'   => $hEnd,
                     ];
                 }
                 break;
 
+            case '7d':
+                if ($interval === 'hourly') {
+                    // Jika user meminta per jam untuk rentang 7 hari, tampilkan 24 jam hari ini
+                    $todayStart = $now->copy()->startOfDay();
+                    for ($h = 0; $h < 24; $h++) {
+                        $hStart = $todayStart->copy()->addHours($h);
+                        $hEnd = $hStart->copy()->endOfHour();
+                        $buckets[] = [
+                            'label' => sprintf('%02d:00', $h),
+                            'start' => $hStart,
+                            'end'   => $hEnd,
+                        ];
+                    }
+                } else {
+                    for ($i = 6; $i >= 0; $i--) {
+                        $d = $now->copy()->subDays($i);
+                        $buckets[] = [
+                            'label' => $d->translatedFormat('d M'),
+                            'start' => $d->copy()->startOfDay(),
+                            'end'   => $d->copy()->endOfDay(),
+                        ];
+                    }
+                }
+                break;
+
             case '30d':
-                if ($interval === 'weekly') {
+                if ($interval === 'daily') {
+                    // 30 hari penuh (1 hari per bucket)
+                    for ($i = 29; $i >= 0; $i--) {
+                        $d = $now->copy()->subDays($i);
+                        $buckets[] = [
+                            'label' => $d->translatedFormat('d M'),
+                            'start' => $d->copy()->startOfDay(),
+                            'end'   => $d->copy()->endOfDay(),
+                        ];
+                    }
+                } elseif ($interval === 'weekly') {
                     for ($w = 4; $w >= 0; $w--) {
                         $wStart = $now->copy()->subWeeks($w)->startOfWeek();
                         $wEnd = $wStart->copy()->endOfWeek();
@@ -446,6 +538,7 @@ class AnalyticsService
                         ];
                     }
                 } else {
+                    // 3-day aggregation (10 buckets)
                     for ($i = 29; $i >= 0; $i -= 3) {
                         $dStart = $now->copy()->subDays($i)->startOfDay();
                         $dEnd = $dStart->copy()->addDays(2)->endOfDay();
@@ -459,7 +552,16 @@ class AnalyticsService
                 break;
 
             case '90d':
-                if ($interval === 'monthly') {
+                if ($interval === 'daily') {
+                    for ($i = 89; $i >= 0; $i--) {
+                        $d = $now->copy()->subDays($i);
+                        $buckets[] = [
+                            'label' => $d->translatedFormat('d M'),
+                            'start' => $d->copy()->startOfDay(),
+                            'end'   => $d->copy()->endOfDay(),
+                        ];
+                    }
+                } elseif ($interval === 'monthly') {
                     for ($m = 2; $m >= 0; $m--) {
                         $mDate = $now->copy()->subMonths($m);
                         $buckets[] = [

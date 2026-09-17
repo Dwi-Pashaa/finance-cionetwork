@@ -200,9 +200,23 @@ class AnalyticsEndpointTest extends TestCase
         $this->assertEquals('Laba Bersih (Net Profit)', $data['series'][2]['name']);
     }
 
+    public function test_chart_endpoint_supports_1d_hourly_range(): void
+    {
+        $path = '/api/v1/analytics/chart?range=1d&interval=hourly';
+        $response = $this->getJson($path, $this->headers('GET', $path));
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $categories = $response->json('data.categories');
+        $this->assertCount(24, $categories);
+        $this->assertEquals('00:00', $categories[0]);
+        $this->assertEquals('23:00', $categories[23]);
+    }
+
     public function test_chart_endpoint_supports_various_ranges(): void
     {
-        foreach (['30d', '90d', 'ytd', '1y'] as $range) {
+        foreach (['1d', '30d', '90d', 'ytd', '1y'] as $range) {
             $path = "/api/v1/analytics/chart?range={$range}";
             $response = $this->getJson($path, $this->headers('GET', $path));
 

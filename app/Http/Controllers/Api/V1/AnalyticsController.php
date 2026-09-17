@@ -40,18 +40,20 @@ class AnalyticsController extends Controller
     public function chart(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'range'       => ['nullable', 'string', 'in:7d,30d,90d,ytd,1y'],
-            'interval'    => ['nullable', 'string', 'in:daily,weekly,monthly'],
+            'range'       => ['nullable', 'string', 'in:1d,24h,today,1h,1hr,7d,30d,90d,ytd,1y'],
+            'interval'    => ['nullable', 'string', 'in:hourly,daily,weekly,monthly,3d'],
             'client_code' => ['nullable', 'string', 'max:50'],
+            'date'        => ['nullable', 'date'],
             'refresh'     => ['nullable', 'boolean'],
         ]);
 
-        $range = $validated['range'] ?? '7d';
-        $interval = $validated['interval'] ?? 'daily';
+        $range = strtolower($validated['range'] ?? '7d');
+        $interval = $validated['interval'] ?? (in_array($range, ['1d', '24h', 'today', '1h', '1hr']) ? 'hourly' : 'daily');
         $clientCode = $validated['client_code'] ?? null;
+        $date = $validated['date'] ?? null;
         $useCache = ! ($request->boolean('refresh'));
 
-        $data = $this->analyticsService->getChart($range, $interval, $clientCode, $useCache);
+        $data = $this->analyticsService->getChart($range, $interval, $clientCode, $useCache, $date);
 
         return ApiResponse::success('Chart time-series retrieved successfully', $data);
     }
