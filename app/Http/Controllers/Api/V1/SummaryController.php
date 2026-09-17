@@ -10,120 +10,125 @@ use App\Services\Support\ApiResponse;
 use App\Services\Xendit\XenditService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Spatie\Activitylog\Models\Activity;
 
 class SummaryController extends Controller
 {
     public function __construct(
-        private FinanceSummaryService $summaryService,
-        private XenditService $xenditService
+        private FinanceSummaryService ,
+        private XenditService 
     ) {}
 
-    public function index(Request $request)
+    public function index(Request )
     {
-        $startDate = $request->query('date_from') ? Carbon::parse($request->query('date_from'))->startOfDay() : now()->startOfMonth();
-        $endDate = $request->query('date_to') ? Carbon::parse($request->query('date_to'))->endOfDay() : now()->endOfDay();
+         = ->query('date_from') ? Carbon::parse(->query('date_from'))->startOfDay() : now()->startOfMonth();
+         = ->query('date_to') ? Carbon::parse(->query('date_to'))->endOfDay() : now()->endOfDay();
 
-        // 1. Pemasukan Kas Internal
-        $manualIncome = (float) Income::whereBetween('transaction_date', [$startDate->toDateString(), $endDate->toDateString()])->sum('amount');
+         = 'cio_finance_summary_' . ->format('Ymd') . '_' . ->format('Ymd');
 
-        // 2. Pengeluaran Kas Internal
-        $generalFinanceExpense = (float) Expense::whereBetween('transaction_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
+        return Cache::remember(, 60, function () use (, ) {
+            // 1. Pemasukan Kas Internal
+             = (float) Income::whereBetween('transaction_date', [->toDateString(), ->toDateString()])->sum('amount');
 
-        // 3. Log External Activity dari Semua Web (Operasional, Slip Gaji, Investor, dll)
-        $operationalExpense = 0.0;
-        $payrollExpense = 0.0;
-        $investorExpense = 0.0;
-        $xenditOutflowAndFees = 0.0;
-        $xenditInflow = 0.0;
+            // 2. Pengeluaran Kas Internal
+             = (float) Expense::whereBetween('transaction_date', [->toDateString(), ->toDateString()])
+                ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
 
-        $externalLogs = Activity::where('log_name', 'external_finance')
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->get();
+            // 3. Log External Activity dari Semua Web (Operasional, Slip Gaji, Investor, dll)
+             = 0.0;
+             = 0.0;
+             = 0.0;
+             = 0.0;
+             = 0.0;
 
-        foreach ($externalLogs as $log) {
-            $props = $log->properties ?? [];
-            $amount = (float) ($props['amount'] ?? 0);
-            $clientCode = strtolower($props['client_code'] ?? ($props['client_id'] ?? ''));
-            $channel = strtolower($props['channel'] ?? ($props['balance_type'] ?? 'manual'));
-            $event = strtolower($log->event ?? ($props['type'] ?? ''));
+             = Activity::where('log_name', 'external_finance')
+                ->whereBetween('created_at', [, ])
+                ->get();
 
-            if ($event === 'income' || ($props['type'] ?? '') === 'income' || $event === 'refund_balance') {
-                if ($channel === 'xendit') {
-                    $xenditInflow += $amount;
-                } else {
-                    $manualIncome += $amount;
-                }
-            } else {
-                if (str_contains($clientCode, 'operasional')) {
-                    $operationalExpense += $amount;
-                } elseif (str_contains($clientCode, 'slip') || str_contains($clientCode, 'keuangan') || str_contains($clientCode, 'gaji')) {
-                    $payrollExpense += $amount;
-                } elseif (str_contains($clientCode, 'investor')) {
-                    $investorExpense += $amount;
-                } else {
-                    if ($channel === 'xendit') {
-                        $xenditOutflowAndFees += $amount;
+            foreach ( as ) {
+                 = ->properties ?? [];
+                 = (float) (['amount'] ?? 0);
+                 = strtolower(['client_code'] ?? (['client_id'] ?? ''));
+                 = strtolower(['channel'] ?? (['balance_type'] ?? 'manual'));
+                 = strtolower(->event ?? (['type'] ?? ''));
+
+                if ( === 'income' || (['type'] ?? '') === 'income' ||  === 'refund_balance') {
+                    if ( === 'xendit') {
+                         += ;
                     } else {
-                        $generalFinanceExpense += $amount;
+                         += ;
+                    }
+                } else {
+                    if (str_contains(, 'operasional')) {
+                         += ;
+                    } elseif (str_contains(, 'slip') || str_contains(, 'keuangan') || str_contains(, 'gaji')) {
+                         += ;
+                    } elseif (str_contains(, 'investor')) {
+                         += ;
+                    } else {
+                        if ( === 'xendit') {
+                             += ;
+                        } else {
+                             += ;
+                        }
                     }
                 }
             }
-        }
 
-        // 4. Data Xendit
-        $xenditBalances = [
-            'total' => 0.0,
-            'cash' => 0.0,
-            'holding' => 0.0,
-            'tax' => 0.0,
-            'status' => 'offline',
-        ];
+            // 4. Data Xendit
+             = [
+                'total' => 0.0,
+                'cash' => 0.0,
+                'holding' => 0.0,
+                'tax' => 0.0,
+                'status' => 'offline',
+            ];
 
-        if ($this->xenditService->isConfigured()) {
-            $allBalances = $this->xenditService->getAllBalances();
-            if ($allBalances) {
-                $xenditBalances = [
-                    'total' => (float) ($allBalances['total'] ?? 0),
-                    'cash' => (float) ($allBalances['cash'] ?? 0),
-                    'holding' => (float) ($allBalances['holding'] ?? 0),
-                    'tax' => (float) ($allBalances['tax'] ?? 0),
-                    'status' => 'connected',
-                ];
+            if (->xenditService->isConfigured()) {
+                 = Cache::remember('xendit_cached_all_balances', 120, fn () => ->xenditService->getAllBalances());
+                if () {
+                     = [
+                        'total' => (float) (['total'] ?? 0),
+                        'cash' => (float) (['cash'] ?? 0),
+                        'holding' => (float) (['holding'] ?? 0),
+                        'tax' => (float) (['tax'] ?? 0),
+                        'status' => 'connected',
+                    ];
+                }
+
+                 = Cache::remember('xendit_cached_monthly_summary', 120, fn () => ->xenditService->getMonthlySummary());
+                if () {
+                    if ( == 0) {
+                         = (float) (['total_inflow'] ?? 0);
+                    }
+                    if ( == 0) {
+                         = (float) ((['total_outflow'] ?? 0) + (['total_fee'] ?? 0));
+                    }
+                }
             }
 
-            $monthlyXendit = $this->xenditService->getMonthlySummary();
-            if ($monthlyXendit) {
-                if ($xenditInflow == 0) {
-                    $xenditInflow = (float) ($monthlyXendit['total_inflow'] ?? 0);
-                }
-                if ($xenditOutflowAndFees == 0) {
-                    $xenditOutflowAndFees = (float) (($monthlyXendit['total_outflow'] ?? 0) + ($monthlyXendit['total_fee'] ?? 0));
-                }
-            }
-        }
+             =  + ;
+             =  +  +  +  + ;
+             =  - ;
+             = ( > 0) ? round(( / ) * 100, 2) : 0;
 
-        $totalIncome = $manualIncome + $xenditInflow;
-        $totalExpense = $operationalExpense + $payrollExpense + $investorExpense + $generalFinanceExpense + $xenditOutflowAndFees;
-        $netProfit = $totalIncome - $totalExpense;
-        $margin = ($totalIncome > 0) ? round(($netProfit / $totalIncome) * 100, 2) : 0;
-
-        return ApiResponse::success('Financial summary retrieved successfully', [
-            'total_income' => $totalIncome,
-            'manual_income' => $manualIncome,
-            'xendit_inflow' => $xenditInflow,
-            'total_expense' => $totalExpense,
-            'operational_expense' => $operationalExpense,
-            'payroll_expense' => $payrollExpense,
-            'investor_expense' => $investorExpense,
-            'general_finance_expense' => $generalFinanceExpense,
-            'xendit_outflow_and_fees' => $xenditOutflowAndFees,
-            'net_profit' => $netProfit,
-            'profit_margin_percentage' => $margin,
-            'xendit_balances' => $xenditBalances,
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-        ]);
+            return ApiResponse::success('Financial summary retrieved successfully', [
+                'total_income' => ,
+                'manual_income' => ,
+                'xendit_inflow' => ,
+                'total_expense' => ,
+                'operational_expense' => ,
+                'payroll_expense' => ,
+                'investor_expense' => ,
+                'general_finance_expense' => ,
+                'xendit_outflow_and_fees' => ,
+                'net_profit' => ,
+                'profit_margin_percentage' => ,
+                'xendit_balances' => ,
+                'period' => ->format('d M Y') . ' - ' . ->format('d M Y'),
+            ]);
+        });
     }
 }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\AnalyticsController;
 use App\Http\Controllers\Api\V1\BalanceController;
 use App\Http\Controllers\Api\V1\FinanceHistoryController;
 use App\Http\Controllers\Api\V1\HealthController;
@@ -22,5 +23,12 @@ Route::prefix('v1')->group(function () {
         Route::post('/balance/refund', [BalanceController::class, 'refund'])->name('api.v1.balance.refund');
         Route::get('/history', [FinanceHistoryController::class, 'index'])->name('api.v1.history.index');
         Route::post('/history', [FinanceHistoryController::class, 'store'])->name('api.v1.history.store');
+
+        // Analytics & Consolidation Multi-Web (CIO Saham Integration)
+        Route::prefix('analytics')->group(function () {
+            Route::get('/overview', [AnalyticsController::class, 'overview'])->name('api.v1.analytics.overview');
+            Route::get('/chart', [AnalyticsController::class, 'chart'])->name('api.v1.analytics.chart');
+            Route::get('/growth', [AnalyticsController::class, 'growth'])->name('api.v1.analytics.growth');
+        });
     });
 });
