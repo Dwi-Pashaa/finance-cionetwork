@@ -9,6 +9,7 @@ use App\Models\BalanceChannelSetting;
 use App\Services\Api\BalanceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Spatie\Activitylog\Models\Activity;
 
 class XenditWebhookController extends Controller
 {
@@ -47,8 +48,49 @@ class XenditWebhookController extends Controller
         }
 
         if (! $client) {
-            Log::warning('[Xendit Webhook] Client not found for external_id: ' . $externalId);
-            return response()->json(['message' => 'Client not found'], 404);
+            // Catat sebagai transaksi pembayaran umum (QRIS, E-Commerce, dsb.) ke activity log
+            $existingActivity = Activity::query()
+                ->where('log_name', 'external_finance')
+                ->where(function ($q) use ($invoiceId, $externalId) {
+                    $q->where('properties->xendit_id', $invoiceId);
+                    if (! empty($externalId)) {
+                        $q->orWhere('properties->reference_id', $externalId)
+                          ->orWhere('properties->subject_external_id', $externalId);
+                    }
+                })
+                ->first();
+
+            if (! $existingActivity) {
+                $formattedAmount = 'Rp ' . number_format($amount, 0, ',', '.');
+                $refStr = $externalId ? " (Ref: {$externalId})" : '';
+                $desc = "Pembayaran sebesar {$formattedAmount} berhasil diterima via {$paymentChannel}{$refStr}";
+
+                Activity::create([
+                    'log_name'    => 'external_finance',
+                    'event'       => 'invoice.paid',
+                    'description' => $desc,
+                    'properties'  => [
+                        'source'              => 'xendit',
+                        'xendit_id'           => $invoiceId,
+                        'reference_id'        => $externalId,
+                        'subject_external_id' => $externalId ?: $invoiceId,
+                        'subject_type'        => 'Income',
+                        'client_code'         => 'XENDIT',
+                        'client_name'         => 'Xendit Gateway',
+                        'channel'             => $paymentChannel,
+                        'raw_channel'         => $paymentChannel,
+                        'amount'              => $amount,
+                        'balance_type'        => 'xendit',
+                        'status'              => $status,
+                    ],
+                    'created_at'  => now('Asia/Jakarta'),
+                    'updated_at'  => now('Asia/Jakarta'),
+                ]);
+            }
+
+            Log::info('[Xendit Webhook] General payment recorded in activity log: ' . $externalId);
+
+            return response()->json(['status' => 'success', 'message' => 'General invoice payment recorded in activity log'], 200);
         }
 
         if (! BalanceChannelSetting::isXenditActive()) {

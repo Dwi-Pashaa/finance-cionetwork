@@ -318,6 +318,9 @@ class AnalyticsService
         $revenue = 0.0;
         $expenses = 0.0;
 
+        $inflowEvents = ['xendit_topup', 'refund_balance', 'invoice.paid', 'xendit_payment', 'payment.succeeded', 'topup.succeeded'];
+        $outflowEvents = ['deduct_balance', 'expense.created', 'xendit_disbursement', 'disbursement.succeeded', 'payout.succeeded'];
+
         if ($clientCode) {
             // Filter aktivitas client tertentu
             $activities = Activity::query()
@@ -331,9 +334,9 @@ class AnalyticsService
                 $subjectType = strtolower($act->getExtraProperty('subject_type') ?? '');
                 $event = strtolower($act->event ?? '');
 
-                if ($subjectType === 'income' || in_array($event, ['xendit_topup', 'refund_balance', 'invoice.paid'])) {
+                if ($subjectType === 'income' || in_array($event, $inflowEvents)) {
                     $revenue += $amt;
-                } elseif ($subjectType === 'expense' || in_array($event, ['deduct_balance', 'expense.created'])) {
+                } elseif ($subjectType === 'expense' || in_array($event, $outflowEvents)) {
                     $expenses += $amt;
                 }
             }
@@ -345,38 +348,59 @@ class AnalyticsService
             $expenses += (float) Expense::whereBetween('transaction_date', [$startDateStr, $endDateStr])
                 ->sum(DB::raw('amount + COALESCE(admin_fee_amount, 0)'));
 
-            // 3. Log External Activity dari Semua Web
+            // 3. Log External Activity dari Semua Web & Xendit
             $activities = Activity::query()
                 ->where('log_name', 'external_finance')
                 ->whereBetween('created_at', [$start, $end])
                 ->get();
 
+            $loggedXenditIds = [];
             foreach ($activities as $act) {
                 $amt = (float) ($act->getExtraProperty('amount') ?? 0);
                 $subjectType = strtolower($act->getExtraProperty('subject_type') ?? '');
                 $event = strtolower($act->event ?? '');
 
-                if ($subjectType === 'income' || in_array($event, ['xendit_topup', 'refund_balance', 'invoice.paid'])) {
+                $xId = $act->getExtraProperty('xendit_id');
+                $refId = $act->getExtraProperty('reference_id') ?? $act->getExtraProperty('subject_external_id');
+                if ($xId) {
+                    $loggedXenditIds[$xId] = true;
+                }
+                if ($refId) {
+                    $loggedXenditIds[$refId] = true;
+                }
+
+                if ($subjectType === 'income' || in_array($event, $inflowEvents)) {
                     $revenue += $amt;
-                } elseif ($subjectType === 'expense' || in_array($event, ['deduct_balance', 'expense.created'])) {
+                } elseif ($subjectType === 'expense' || in_array($event, $outflowEvents)) {
                     $expenses += $amt;
                 }
             }
 
-            // 4. Data dari Gateway Xendit jika terhubung
+            // 4. Data dari Gateway Xendit jika terhubung (hanya tambahkan transaksi yang belum tercatat di DB untuk mencegah duplikasi)
             if ($this->xenditService->isConfigured()) {
                 $xenditTransactions = $this->xenditService->getRecentTransactions(50);
                 $periodTrx = $xenditTransactions->filter(fn ($t) => $t->created_at->between($start, $end));
 
-                $xenditInflow = (float) $periodTrx->where('is_income', true)->sum('amount');
-                $xenditOutflow = (float) $periodTrx->where('is_income', false)->sum(fn ($t) => $t->amount + ($t->fee ?? 0));
+                // Filter transaksi yang belum tercatat di DB
+                $unloggedTrx = $periodTrx->filter(function ($t) use ($loggedXenditIds) {
+                    $xId = $t->xendit_id ?? null;
+                    $refId = $t->reference_id ?? null;
 
-                if ($revenue == 0 && $xenditInflow > 0) {
-                    $revenue += $xenditInflow;
-                }
-                if ($expenses == 0 && $xenditOutflow > 0) {
-                    $expenses += $xenditOutflow;
-                }
+                    if ($xId && isset($loggedXenditIds[$xId])) {
+                        return false;
+                    }
+                    if ($refId && isset($loggedXenditIds[$refId])) {
+                        return false;
+                    }
+
+                    return true;
+                });
+
+                $xenditInflow = (float) $unloggedTrx->where('is_income', true)->sum('amount');
+                $xenditOutflow = (float) $unloggedTrx->where('is_income', false)->sum(fn ($t) => $t->amount + ($t->fee ?? 0));
+
+                $revenue += $xenditInflow;
+                $expenses += $xenditOutflow;
             }
         }
 

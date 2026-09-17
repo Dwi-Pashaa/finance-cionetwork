@@ -248,6 +248,36 @@ class AnalyticsEndpointTest extends TestCase
         $this->assertGreaterThan(0, $data['estimated_company_valuation']);
     }
 
+    public function test_chart_endpoint_includes_synced_xendit_transactions_across_multi_day_buckets(): void
+    {
+        // Add synced Xendit activity 15 days ago
+        Activity::create([
+            'log_name'    => 'external_finance',
+            'event'       => 'invoice.paid',
+            'description' => 'Pembayaran QRIS Xendit 15 Hari Lalu',
+            'properties'  => [
+                'source'              => 'xendit',
+                'xendit_id'           => 'xen_trx_test_15d',
+                'subject_external_id' => 'INV-TEST-15D',
+                'subject_type'        => 'Income',
+                'client_code'         => 'XENDIT',
+                'amount'              => 5000000.00,
+                'balance_type'        => 'xendit',
+            ],
+            'created_at'  => now()->subDays(15),
+            'updated_at'  => now()->subDays(15),
+        ]);
+
+        $path = '/api/v1/analytics/chart?range=30d&interval=daily';
+        $response = $this->getJson($path, $this->headers('GET', $path));
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $summary = $response->json('data.summary');
+        $this->assertGreaterThanOrEqual(5000000.00, $summary['total_inflow']);
+    }
+
     private function headers(string $method, string $pathWithQuery, array $payload = []): array
     {
         $credential = $this->client->activeCredentials()->first();

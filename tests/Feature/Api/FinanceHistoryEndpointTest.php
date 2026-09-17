@@ -188,6 +188,40 @@ class FinanceHistoryEndpointTest extends TestCase
         $this->assertEquals(1500000, $xenditResponse->json('data.items.0.amount'));
     }
 
+    public function test_xendit_synced_transactions_can_be_retrieved_with_client_code_all_or_xendit(): void
+    {
+        Activity::create([
+            'log_name'    => 'external_finance',
+            'event'       => 'invoice.paid',
+            'description' => 'Pembayaran sebesar Rp 166.170 berhasil diterima via QRIS',
+            'properties'  => [
+                'source'              => 'xendit',
+                'xendit_id'           => 'xen_live_qris_001',
+                'reference_id'        => 'INV-992690875805',
+                'subject_external_id' => 'INV-992690875805',
+                'subject_type'        => 'Income',
+                'client_code'         => 'XENDIT',
+                'client_name'         => 'Xendit Gateway',
+                'channel'             => 'QRIS',
+                'amount'              => 166170.00,
+                'balance_type'        => 'xendit',
+            ],
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        $response = $this->getJson('/api/v1/history?client_code=ALL', $this->headers('GET', '/api/v1/history?client_code=ALL'));
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $items = collect($response->json('data.items'));
+        $xenditItem = $items->firstWhere('subject_external_id', 'INV-992690875805');
+        $this->assertNotNull($xenditItem);
+        $this->assertEquals(166170, $xenditItem['amount']);
+        $this->assertEquals('XENDIT', $xenditItem['source_client_code']);
+    }
+
     private function headers(string $method, string $pathWithQuery, array $payload = []): array
     {
         $credential = $this->client->activeCredentials()->first();

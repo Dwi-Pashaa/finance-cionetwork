@@ -16,6 +16,12 @@ class Kernel extends ConsoleKernel
         $schedule->call(function () {
             NonceCache::where('expires_at', '<', now())->delete();
         })->daily()->name('flush-expired-nonces');
+
+        // Sinkronisasi otomatis transaksi Xendit setiap jam (atau saat scheduler berjalan)
+        $schedule->command('xendit:sync-transactions --days=7 --limit=100')
+            ->hourly()
+            ->withoutOverlapping()
+            ->runInBackground();
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Services\Xendit;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Spatie\Activitylog\Models\Activity;
 
 class XenditService
 {
@@ -162,6 +163,203 @@ class XenditService
                 return [];
             }
         });
+    }
+
+    /**
+     * Ambil transaksi dari Xendit dengan dukungan pagination (bisa mengambil lebih dari 50 item).
+     *
+     * @param int   $maxLimit Total transaksi maksimum yang ingin diambil (misal 100, 200)
+     * @param array $filters  Filter opsional seperti created[gte], types, statuses
+     * @return array
+     */
+    public function fetchAllTransactions(int $maxLimit = 100, array $filters = []): array
+    {
+        if (!$this->isConfigured()) {
+            return [];
+        }
+
+        $allData = [];
+        $afterId = null;
+        $remaining = $maxLimit;
+
+        while ($remaining > 0) {
+            $batchLimit = min($remaining, 50);
+            $query = array_merge($filters, ['limit' => $batchLimit]);
+            if ($afterId) {
+                $query['after_id'] = $afterId;
+            }
+
+            try {
+                $response = Http::withoutVerifying()
+                    ->withBasicAuth($this->secretKey, '')
+                    ->timeout(12)
+                    ->get("{$this->baseUrl}/transactions", $query);
+
+                if (!$response->successful()) {
+                    Log::error('[Xendit] Error fetch transactions page: ' . $response->status() . ' | ' . $response->body());
+                    break;
+                }
+
+                $data = $response->json('data', []);
+                if (empty($data)) {
+                    break;
+                }
+
+                $allData = array_merge($allData, $data);
+                $remaining -= count($data);
+
+                $hasMore = $response->json('has_more', false);
+                $lastItem = end($data);
+                $afterId = $lastItem['id'] ?? null;
+
+                if (!$hasMore || count($data) < $batchLimit || !$afterId) {
+                    break;
+                }
+            } catch (\Throwable $e) {
+                Log::error('[Xendit] Exception fetchAllTransactions: ' . $e->getMessage());
+                break;
+            }
+        }
+
+        return $allData;
+    }
+
+    /**
+     * Sinkronisasi transaksi Xendit ke tabel database activity_log (log_name: external_finance).
+     *
+     * @param int      $limit Jumlah maksimum transaksi yang ditarik
+     * @param int|null $days  Jumlah hari ke belakang (misal 30 hari)
+     * @return array{total_fetched: int, synced_count: int, skipped_count: int, synced_activities: array}
+     */
+    public function syncTransactionsToDatabase(int $limit = 100, ?int $days = 30): array
+    {
+        if (!$this->isConfigured()) {
+            return [
+                'total_fetched'     => 0,
+                'synced_count'      => 0,
+                'skipped_count'     => 0,
+                'synced_activities' => [],
+            ];
+        }
+
+        $appTz = config('app.timezone', 'Asia/Jakarta');
+        $filters = [];
+        if ($days && $days > 0) {
+            $since = now($appTz)->subDays($days)->startOfDay();
+            $filters['created[gte]'] = $since->toIso8601String();
+        }
+
+        $rawTransactions = $this->fetchAllTransactions($limit, $filters);
+        $syncedCount = 0;
+        $skippedCount = 0;
+        $syncedIds = [];
+
+        foreach ($rawTransactions as $trx) {
+            $xenditId = $trx['id'] ?? null;
+            $referenceId = $trx['reference_id'] ?? null;
+
+            if (!$xenditId && !$referenceId) {
+                continue;
+            }
+
+            // Check if activity already exists in DB
+            $existing = Activity::query()
+                ->where('log_name', 'external_finance')
+                ->where(function ($q) use ($xenditId, $referenceId) {
+                    if ($xenditId) {
+                        $q->where('properties->xendit_id', $xenditId);
+                    }
+                    if ($referenceId) {
+                        if ($xenditId) {
+                            $q->orWhere('properties->reference_id', $referenceId)
+                              ->orWhere('properties->subject_external_id', $referenceId);
+                        } else {
+                            $q->where('properties->reference_id', $referenceId)
+                              ->orWhere('properties->subject_external_id', $referenceId);
+                        }
+                    }
+                })
+                ->first();
+
+            if ($existing) {
+                $skippedCount++;
+                continue;
+            }
+
+            $type = strtoupper($trx['type'] ?? 'UNKNOWN');
+            $status = strtoupper($trx['status'] ?? 'UNKNOWN');
+            $cashflow = strtoupper($trx['cashflow'] ?? '');
+            $amount = (float) ($trx['amount'] ?? 0);
+            $fee = (float) ($trx['fee'] ?? 0);
+            $net = (float) ($trx['net_amount'] ?? ($amount - $fee));
+            $rawChannel = $trx['channel_code'] ?? $trx['channel_category'] ?? 'Xendit';
+            $channelCategory = $trx['channel_category'] ?? null;
+            $formattedChannel = $this->formatChannelName($rawChannel);
+            $paymentCategory = $this->categorizePaymentMethod($rawChannel, $channelCategory, $type);
+
+            $isIncome = ($cashflow === 'MONEY_IN') || in_array($type, [
+                'PAYMENT', 'DEPOSIT', 'CREDIT', 'TOPUP', 'REFUND_REVERSAL',
+                'INVOICE', 'QR_CODE', 'EWALLET', 'DIRECT_DEBIT', 'VIRTUAL_ACCOUNT', 'CARD'
+            ]);
+
+            $event = match ($type) {
+                'PAYMENT', 'INVOICE'     => 'invoice.paid',
+                'DISBURSEMENT', 'PAYOUT' => 'deduct_balance',
+                'TOPUP'                  => 'xendit_topup',
+                'REFUND'                 => 'refund_balance',
+                'FEE'                    => 'deduct_balance',
+                default                  => $isIncome ? 'invoice.paid' : 'deduct_balance',
+            };
+
+            $message = $this->formatTransactionMessage($type, $status, $amount, $formattedChannel, $trx);
+
+            $createdAt = isset($trx['created'])
+                ? \Carbon\Carbon::parse($trx['created'])->setTimezone($appTz)
+                : \Carbon\Carbon::now($appTz);
+            $updatedAt = isset($trx['updated'])
+                ? \Carbon\Carbon::parse($trx['updated'])->setTimezone($appTz)
+                : $createdAt;
+
+            $properties = [
+                'source'              => 'xendit',
+                'xendit_id'           => $xenditId,
+                'reference_id'        => $referenceId,
+                'subject_external_id' => $referenceId ?: $xenditId,
+                'subject_type'        => $isIncome ? 'Income' : 'Expense',
+                'client_code'         => 'XENDIT',
+                'client_name'         => 'Xendit Gateway',
+                'channel'             => $formattedChannel,
+                'raw_channel'         => $rawChannel,
+                'payment_category'    => $paymentCategory,
+                'amount'              => $amount,
+                'fee'                 => $fee,
+                'net_amount'          => $net,
+                'currency'            => $trx['currency'] ?? 'IDR',
+                'balance_type'        => 'xendit',
+                'type'                => $type,
+                'status'              => $status,
+                'description'         => $trx['description'] ?? null,
+            ];
+
+            $activity = Activity::create([
+                'log_name'    => 'external_finance',
+                'event'       => $event,
+                'description' => $message,
+                'properties'  => $properties,
+                'created_at'  => $createdAt,
+                'updated_at'  => $updatedAt,
+            ]);
+
+            $syncedCount++;
+            $syncedIds[] = $activity->id;
+        }
+
+        return [
+            'total_fetched'     => count($rawTransactions),
+            'synced_count'      => $syncedCount,
+            'skipped_count'     => $skippedCount,
+            'synced_activities' => $syncedIds,
+        ];
     }
 
     /**
