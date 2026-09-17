@@ -30,9 +30,22 @@ class DashboardController extends Controller
             $xenditSummary      = $this->xenditService->getMonthlySummary();
         }
 
-        // Paginated activities (for pagination UI)
+        // Paginated activities khusus Log Internal & Web API Client (tidak termasuk mutasi gateway Xendit murni)
         $latestActivities = Activity::query()
-            ->whereIn('log_name', ['finance', 'external_finance'])
+            ->where(function ($query) {
+                $query->where('log_name', 'finance')
+                    ->orWhere(function ($q) {
+                        $q->where('log_name', 'external_finance')
+                            ->where(function ($sub) {
+                                $sub->whereNull('properties->source')
+                                    ->orWhere('properties->source', '!=', 'xendit');
+                            })
+                            ->where(function ($sub) {
+                                $sub->whereNull('properties->client_code')
+                                    ->orWhere('properties->client_code', '!=', 'XENDIT');
+                            });
+                    });
+            })
             ->with(['causer', 'subject'])
             ->latest('id')
             ->paginate(10, ['*'], 'log_page');
